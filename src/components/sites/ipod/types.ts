@@ -1,0 +1,40 @@
+import type { FavoriteSong } from "@/data/favorite-songs";
+
+export type PreviewId = "music" | "games" | "links" | "nowPlaying";
+
+export type ViewId =
+  | "home"
+  | "music"
+  | "games"
+  | "nowPlaying"
+  | "brickGame"
+  | "solitaireGame";
+
+type SharedOptionProps = {
+  label: string;
+  sublabel?: string;
+  imageUrl?: string;
+  preview?: PreviewId;
+};
+
+export type ListOption = SharedOptionProps &
+  (
+    | { type: "view"; viewId: ViewId }
+    | { type: "link"; url: string }
+    | {
+        type: "song";
+        queue: FavoriteSong[];
+        startIndex: number;
+        showNowPlayingView?: boolean;
+      }
+  );
+
+export type ViewInstance = { id: ViewId };
+
+export type ViewConfig = {
+  title: string;
+  /** Split views share the left menu panel with a preview on the right. */
+  split: boolean;
+  /** Games use the menu button themselves, so long-press must not reset. */
+  disableLongPress?: boolean;
+};

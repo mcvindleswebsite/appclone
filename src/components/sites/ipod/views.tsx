@@ -1,0 +1,148 @@
+"use client";
+
+import { useEffect, useMemo, useRef, type ComponentType } from "react";
+
+import { favoriteSongs, type FavoriteSong } from "@/data/favorite-songs";
+import { profile } from "@/data/profile";
+
+import { useAudioPlayer } from "./audio-context";
+import { CoverFlow } from "./CoverFlow";
+import { BrickGameView, SolitaireGameView } from "./games/GameCanvas";
+import { useViewContext } from "./ipod-context";
+import { NowPlaying } from "./NowPlaying";
+import { SelectableList } from "./screen-parts";
+import type { ListOption, ViewId } from "./types";
+import { useMenuHideView, useSelectableList } from "./use-selectable-list";
+import styles from "./ipod.module.css";
+
+/* eslint-disable @next/next/no-img-element -- remote cover art */
+
+const ListView = ({ viewId, options }: { viewId: ViewId; options: ListOption[] }) => {
+  const activeIndex = useSelectableList(viewId, options);
+  return <SelectableList options={options} activeIndex={activeIndex} />;
+};
+
+const linkOptions: ListOption[] = profile.links.map((link) => ({
+  type: "link",
+  label: link.label,
+  url: link.url,
+  preview: "links",
+}));
+
+/** Root menu: Music, Instagram, TikTok, Games (+ Now Playing while a song plays). */
+const HomeView = () => {
+  const { nowPlayingItem } = useAudioPlayer();
+  const options = useMemo<ListOption[]>(
+    () => [
+      { type: "view", label: "Music", viewId: "music", preview: "music" },
+      ...linkOptions,
+      { type: "view", label: "Games", viewId: "games", preview: "games" },
+      ...(nowPlayingItem
+        ? [
+            {
+              type: "view",
+              label: "Now Playing",
+              viewId: "nowPlaying",
+              preview: "nowPlaying",
+            } satisfies ListOption,
+          ]
+        : []),
+    ],
+    [nowPlayingItem]
+  );
+  return <ListView viewId="home" options={options} />;
+};
+
+const songOptions: ListOption[] = favoriteSongs.map((song, index) => ({
+  type: "song",
+  label: song.title,
+  sublabel: song.artist,
+  queue: favoriteSongs,
+  startIndex: index,
+  showNowPlayingView: true,
+}));
+
+/** Wait for the wheel to settle so fast spins don't thrash the audio. */
+const SNIPPET_DELAY_MS = 400;
+
+/**
+ * Plays the focused song's 30-second `previewUrl` clip whenever the
+ * highlight moves (or the list opens). Reads playback state through a ref so
+ * it fires on focus changes only, not when the queue advances on its own.
+ */
+const useFocusSnippet = (viewId: ViewId, songs: FavoriteSong[], focusedSong?: FavoriteSong) => {
+  const { isTopView } = useViewContext();
+  const { play, nowPlayingItem } = useAudioPlayer();
+
+  const latest = useRef({ isActive: false, nowPlayingId: "", play });
+  useEffect(() => {
+    latest.current = {
+      isActive: isTopView(viewId),
+      nowPlayingId: nowPlayingItem?.id ?? "",
+      play,
+    };
+  });
+
+  useEffect(() => {
+    if (!focusedSong) return;
+    const timeout = setTimeout(() => {
+      const { isActive, nowPlayingId, play: playSnippet } = latest.current;
+      if (!isActive || nowPlayingId === focusedSong.id) return;
+      playSnippet(songs, songs.indexOf(focusedSong));
+    }, SNIPPET_DELAY_MS);
+    return () => clearTimeout(timeout);
+  }, [focusedSong, songs]);
+};
+
+/**
+ * The Music screen: Cover Flow over a blurred, darkened copy of the centered
+ * song's cover, which cross-fades as albums land in the middle. The wheel
+ * slides through covers; center opens Now Playing; Menu goes back.
+ */
+const MusicView = () => {
+  const activeIndex = useSelectableList("music", songOptions);
+  const focusedSong = favoriteSongs[activeIndex];
+  useFocusSnippet("music", favoriteSongs, focusedSong);
+
+  if (!favoriteSongs.length) {
+    return <SelectableList options={[]} activeIndex={0} emptyMessage="Add tracks in src/data/favorite-songs.ts" />;
+  }
+
+  return (
+    <div className={styles.musicView}>
+      <div className={styles.coverBackdrop} aria-hidden="true">
+        {favoriteSongs.map((song) => (
+          <img
+            key={song.id}
+            className={styles.coverBackdropImage}
+            src={song.coverArt}
+            alt=""
+            data-visible={song.id === focusedSong?.id}
+          />
+        ))}
+      </div>
+      <CoverFlow songs={favoriteSongs} activeIndex={activeIndex} />
+    </div>
+  );
+};
+
+const gameOptions: ListOption[] = [
+  { type: "view", label: "Brick", viewId: "brickGame", preview: "games" },
+  { type: "view", label: "Solitaire", viewId: "solitaireGame", preview: "games" },
+];
+
+const GamesView = () => <ListView viewId="games" options={gameOptions} />;
+
+const NowPlayingView = () => {
+  useMenuHideView("nowPlaying");
+  return <NowPlaying />;
+};
+
+export const VIEW_COMPONENTS: Record<ViewId, ComponentType> = {
+  home: HomeView,
+  music: MusicView,
+  games: GamesView,
+  nowPlaying: NowPlayingView,
+  brickGame: BrickGameView,
+  solitaireGame: SolitaireGameView,
+};
