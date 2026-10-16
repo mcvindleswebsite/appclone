@@ -22,11 +22,12 @@ const ListView = ({ viewId, options }: { viewId: ViewId; options: ListOption[] }
   return <SelectableList options={options} activeIndex={activeIndex} />;
 };
 
-const linkOptions: ListOption[] = profile.links.map((link) => ({
+const linkOptions: ListOption[] = profile.links.map((link, index) => ({
   type: "link",
   label: link.label,
   url: link.url,
-  preview: "links",
+  avatarUrl: link.avatarUrl,
+  preview: `link-${index}`,
 }));
 
 /** Root menu: Music, Instagram, TikTok, Games (+ Now Playing while a song plays). */

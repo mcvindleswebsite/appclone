@@ -1,6 +1,7 @@
 import type { FavoriteSong } from "@/data/favorite-songs";
 
-export type PreviewId = "music" | "games" | "links" | "nowPlaying";
+/** `link-<n>` previews the nth entry of `profile.links`. */
+export type PreviewId = "music" | "games" | "nowPlaying" | `link-${number}`;
 
 export type ViewId =
   | "home"
@@ -14,6 +15,8 @@ type SharedOptionProps = {
   label: string;
   sublabel?: string;
   imageUrl?: string;
+  /** Circular avatar shown before the label, falling back to initials. */
+  avatarUrl?: string;
   preview?: PreviewId;
 };
 

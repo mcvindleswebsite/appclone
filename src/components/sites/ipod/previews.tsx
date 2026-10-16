@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { favoriteSongs } from "@/data/favorite-songs";
-import { profile } from "@/data/profile";
+import { profile, type ProfileLink } from "@/data/profile";
 
 import { useAudioPlayer } from "./audio-context";
 import { useViewContext } from "./ipod-context";
+import { Avatar } from "./screen-parts";
 import type { PreviewId } from "./types";
 import styles from "./ipod.module.css";
 
@@ -78,17 +79,11 @@ const GamesPreview = () => (
   </div>
 );
 
-const initials = profile.name
-  .split(" ")
-  .map((part) => part[0])
-  .join("");
-
-const ProfilePreview = () => (
+/** Large avatar for the highlighted social link (initials if it can't load). */
+const LinkPreview = ({ link }: { link?: ProfileLink }) => (
   <div className={styles.previewCard}>
-    <div className={styles.monogram} aria-hidden="true">
-      {initials}
-    </div>
-    <h3 className={styles.previewText}>{profile.name}</h3>
+    {link && <Avatar key={link.avatarUrl} className={styles.previewAvatar} src={link.avatarUrl} size={64} />}
+    <h3 className={styles.previewText}>{link?.label ?? profile.name}</h3>
     <h3 className={styles.previewSubtext}>@{profile.handle}</h3>
   </div>
 );
@@ -108,10 +103,10 @@ const NowPlayingPreview = () => {
 
 const MusicPreviewStatic = () => <KenBurns urls={coverUrls} />;
 
-const STATIC_PREVIEWS: Record<Exclude<PreviewId, "music">, () => React.ReactNode> = {
-  games: () => <GamesPreview />,
-  links: () => <ProfilePreview />,
-  nowPlaying: () => <NowPlayingPreview />,
+const renderStaticPreview = (preview: Exclude<PreviewId, "music">) => {
+  if (preview === "games") return <GamesPreview />;
+  if (preview === "nowPlaying") return <NowPlayingPreview />;
+  return <LinkPreview link={profile.links[Number(preview.slice("link-".length))]} />;
 };
 
 export const PreviewPanel = ({ isHidden }: { isHidden: boolean }) => {
@@ -121,7 +116,7 @@ export const PreviewPanel = ({ isHidden }: { isHidden: boolean }) => {
     <div className={styles.previewPanel} data-hidden={isHidden}>
       {/* The music preview slides in; the others simply appear. */}
       <AnimatePresence>{preview === "music" && <MusicPreview />}</AnimatePresence>
-      {preview !== "music" && STATIC_PREVIEWS[preview]()}
+      {preview !== "music" && renderStaticPreview(preview)}
     </div>
   );
 };

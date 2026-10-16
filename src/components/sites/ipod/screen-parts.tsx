@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
+import { profileInitials } from "@/data/profile";
+
 import { useAudioPlayer } from "./audio-context";
 import { useViewContext } from "./ipod-context";
 import type { ListOption } from "./types";
@@ -80,6 +82,38 @@ export const Header = () => {
   );
 };
 
+type AvatarProps = { src: string; size: number; className?: string };
+
+/**
+ * Circular avatar from an external proxy (plain <img>, so no Next image
+ * domain config). The initials always render underneath; the photo fades in
+ * once loaded and is dropped if the fetch fails or is rate-limited.
+ */
+export const Avatar = ({ src, size, className }: AvatarProps) => {
+  const [status, setStatus] = useState<"loading" | "loaded" | "failed">("loading");
+
+  return (
+    <span
+      className={`${styles.avatar} ${className ?? ""}`}
+      style={{ width: size, height: size, fontSize: size * 0.4 }}
+      aria-hidden="true"
+    >
+      {profileInitials}
+      {status !== "failed" && (
+        <img
+          className={styles.avatarImage}
+          src={src}
+          alt=""
+          referrerPolicy="no-referrer"
+          data-loaded={status === "loaded"}
+          onLoad={() => setStatus("loaded")}
+          onError={() => setStatus("failed")}
+        />
+      )}
+    </span>
+  );
+};
+
 type SelectableListProps = {
   options: ListOption[];
   activeIndex: number;
@@ -125,6 +159,9 @@ export const SelectableList = ({
           <>
             {option.imageUrl && (
               <img className={styles.listImage} src={option.imageUrl} alt="" />
+            )}
+            {option.avatarUrl && (
+              <Avatar className={styles.listAvatar} src={option.avatarUrl} size={20} />
             )}
             <div className={styles.listLabelContainer}>
               <h3 className={styles.listLabel}>{option.label}</h3>
