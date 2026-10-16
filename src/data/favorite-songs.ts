@@ -7,6 +7,9 @@
  * - `coverArt` and `previewUrl` accept absolute URLs or paths under `public/`
  *   (e.g. drop files in `public/sites/ipod/music/` and use
  *   "/sites/ipod/music/my-song.m4a").
+ * - Remote audio must be served with CORS (Access-Control-Allow-Origin), since
+ *   playback runs through Web Audio for volume control. Apple's preview CDN
+ *   does; files in `public/` always work.
  * - These entries use Apple's public 30-second iTunes previews and 600×600
  *   artwork (looked up via the iTunes Search API).
  */

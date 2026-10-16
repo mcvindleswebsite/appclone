@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, type CSSProperties, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, type CSSProperties, type MouseEvent } from "react";
 import { motion, type PanInfo } from "motion/react";
 
 import {
@@ -180,6 +180,16 @@ export const ClickWheel = () => {
   );
 
   useWindowEvent<KeyboardEvent>("keydown", (event) => dispatchKeyboardEvent(event.key));
+
+  // touch-action: none (CSS) covers modern browsers; this non-passive guard
+  // also stops older iOS Safari from scrolling the page mid-spin.
+  useEffect(() => {
+    const wheel = rootRef.current;
+    if (!wheel) return;
+    const preventScroll = (event: TouchEvent) => event.preventDefault();
+    wheel.addEventListener("touchmove", preventScroll, { passive: false });
+    return () => wheel.removeEventListener("touchmove", preventScroll);
+  }, []);
 
   const centerHandlers = useLongPress(
     () => {

@@ -26,7 +26,7 @@ export type PlaybackInfo = {
   timeRemaining: number;
 };
 
-type AudioContextValue = {
+type AudioPlayerContextValue = {
   nowPlayingItem?: FavoriteSong;
   queue: FavoriteSong[];
   playbackInfo: PlaybackInfo;
@@ -41,7 +41,33 @@ type AudioContextValue = {
   seekToTime: (time: number) => void;
 };
 
-const INITIAL_VOLUME = 0.5;
+const VOLUME_STORAGE_KEY = "mcvindle_ipod_volume";
+const DEFAULT_VOLUME = 0.8;
+/** Short ramp so gain changes never click or "zipper" while spinning. */
+const GAIN_RAMP_SECONDS = 0.015;
+
+const clampVolume = (value: number) => Math.round(Math.min(Math.max(value, 0), 1) * 100) / 100;
+
+const readStoredVolume = () => {
+  try {
+    const stored = Number.parseFloat(window.localStorage.getItem(VOLUME_STORAGE_KEY) ?? "");
+    return Number.isFinite(stored) ? clampVolume(stored) : DEFAULT_VOLUME;
+  } catch {
+    return DEFAULT_VOLUME;
+  }
+};
+
+const storeVolume = (value: number) => {
+  try {
+    window.localStorage.setItem(VOLUME_STORAGE_KEY, String(value));
+  } catch {
+    // Storage unavailable (private mode); volume lasts for this visit only.
+  }
+};
+
+type VolumeGraph = { context: AudioContext; gain: GainNode };
+
+type WindowWithWebkitAudio = Window & { webkitAudioContext?: typeof AudioContext };
 
 const IDLE_PLAYBACK: PlaybackInfo = {
   isPlaying: false,
@@ -53,7 +79,7 @@ const IDLE_PLAYBACK: PlaybackInfo = {
   timeRemaining: 0,
 };
 
-const AudioContext = createContext<AudioContextValue | null>(null);
+const AudioPlayerContext = createContext<AudioPlayerContextValue | null>(null);
 
 /** Plays the local favorites list through a single HTMLAudioElement. */
 export const AudioProvider = ({ children }: { children: ReactNode }) => {
@@ -61,10 +87,13 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
   const [queue, setQueue] = useState<FavoriteSong[]>([]);
   const [queueIndex, setQueueIndex] = useState(-1);
   const [playbackInfo, setPlaybackInfo] = useState<PlaybackInfo>(IDLE_PLAYBACK);
-  const [volume, setVolumeState] = useState(INITIAL_VOLUME);
+  // Provider mounts client-side only, so localStorage is available here.
+  const [volume, setVolumeState] = useState(readStoredVolume);
   // Source of truth for the wheel: fast spins fire several ticks per frame,
   // so steps accumulate here instead of on a possibly stale render value.
-  const volumeRef = useRef(INITIAL_VOLUME);
+  const volumeRef = useRef(volume);
+  /** element → GainNode → speakers; created on the first user gesture. */
+  const graphRef = useRef<VolumeGraph | null>(null);
 
   const nowPlayingItem = queue[queueIndex];
 
@@ -97,6 +126,10 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const audio = new Audio();
     audio.preload = "auto";
+    // Required to route remote audio through Web Audio (Apple's preview CDN
+    // sends Access-Control-Allow-Origin: *). Must be set before `src`.
+    audio.crossOrigin = "anonymous";
+    // Fallback until the gain graph exists (and where Web Audio is missing).
     audio.volume = volumeRef.current;
     audioRef.current = audio;
     const events = [
@@ -162,14 +195,58 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
     if (audio) audio.currentTime = time;
   }, []);
 
+  /**
+   * Volume is applied with a GainNode rather than `audio.volume`, which iOS
+   * Safari ignores. Browsers only allow audio routing after a user gesture,
+   * so the graph is built (and resumed) on the first tap/click/keypress.
+   */
+  useEffect(() => {
+    const unlock = () => {
+      const graph = graphRef.current;
+      if (graph) {
+        if (graph.context.state === "suspended") void graph.context.resume();
+        return;
+      }
+      const audio = audioRef.current;
+      const AudioContextCtor =
+        window.AudioContext ?? (window as WindowWithWebkitAudio).webkitAudioContext;
+      if (!audio || !AudioContextCtor) return;
+      try {
+        const context = new AudioContextCtor();
+        const gain = context.createGain();
+        gain.gain.value = volumeRef.current;
+        context.createMediaElementSource(audio).connect(gain).connect(context.destination);
+        // The gain node now owns loudness; keep the element at full scale.
+        audio.volume = 1;
+        graphRef.current = { context, gain };
+        void context.resume();
+      } catch {
+        // Web Audio unavailable: audio.volume keeps working as the fallback.
+      }
+    };
+    const events = ["pointerdown", "keydown", "touchend"] as const;
+    events.forEach((name) => window.addEventListener(name, unlock, { capture: true }));
+    return () => {
+      events.forEach((name) => window.removeEventListener(name, unlock, { capture: true }));
+      void graphRef.current?.context.close();
+      graphRef.current = null;
+    };
+  }, []);
+
   const changeVolume = useCallback((delta: number) => {
-    // Round to hundredths so repeated ±0.05 steps land exactly on 0 and 1.
-    const next = Math.round(Math.min(Math.max(volumeRef.current + delta, 0), 1) * 100) / 100;
+    // Rounded to hundredths so repeated ±0.05 steps land exactly on 0 and 1.
+    const next = clampVolume(volumeRef.current + delta);
     if (next === volumeRef.current) return;
     volumeRef.current = next;
-    // Write straight to the element so audio responds on the same tick.
-    if (audioRef.current) audioRef.current.volume = next;
+    // Apply immediately so the sound follows the wheel on the same tick.
+    const graph = graphRef.current;
+    if (graph) {
+      graph.gain.gain.setTargetAtTime(next, graph.context.currentTime, GAIN_RAMP_SECONDS);
+    } else if (audioRef.current) {
+      audioRef.current.volume = next;
+    }
     setVolumeState(next);
+    storeVolume(next);
   }, []);
 
   /** Advance through the queue; clear "now playing" after the last track. */
@@ -226,11 +303,11 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
     ]
   );
 
-  return <AudioContext.Provider value={value}>{children}</AudioContext.Provider>;
+  return <AudioPlayerContext.Provider value={value}>{children}</AudioPlayerContext.Provider>;
 };
 
 export const useAudioPlayer = () => {
-  const value = useContext(AudioContext);
+  const value = useContext(AudioPlayerContext);
   if (!value) throw new Error("useAudioPlayer must be used within AudioProvider");
   return value;
 };
