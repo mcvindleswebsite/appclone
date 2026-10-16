@@ -18,5 +18,10 @@ export const profile = {
       sublabel: "@mcvindle",
       url: "https://tt.mcvindle.com",
     },
+    {
+      label: "Twitch",
+      sublabel: "@mcvindle",
+      url: "https://twitch.mcvindle.com",
+    },
   ] satisfies ProfileLink[],
 };
