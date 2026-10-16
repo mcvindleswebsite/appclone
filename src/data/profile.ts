@@ -17,7 +17,7 @@ export const profile = {
     {
       label: "Instagram",
       sublabel: "@mcvindle",
-      url: "https://ig.mcvindle.com",
+      url: "https://www.instagram.com/mcvindle",
       // Note: unavatar's Instagram provider needs a paid plan; on the free
       // tier this returns 403 and the initials fallback is shown.
       avatarUrl: "https://unavatar.io/instagram/mcvindle?fallback=false",
@@ -25,14 +25,14 @@ export const profile = {
     {
       label: "TikTok",
       sublabel: "@mcvindle",
-      url: "https://tt.mcvindle.com",
+      url: "https://www.tiktok.com/@mcvindle",
       // The "@mcvindle" form is rejected on the free tier; the bare handle works.
       avatarUrl: "https://unavatar.io/tiktok/mcvindle?fallback=false",
     },
     {
       label: "Twitch",
       sublabel: "@mcvindle",
-      url: "https://twitch.mcvindle.com",
+      url: "https://www.twitch.tv/mcvindle",
       avatarUrl: "https://unavatar.io/twitch/mcvindle?fallback=false",
     },
   ] satisfies ProfileLink[],

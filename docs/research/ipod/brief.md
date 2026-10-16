@@ -33,7 +33,7 @@ Source screenshots: `docs/design-references/ipod/source-*.png`.
 
 ## Customizations (requested)
 
-- Root menu (header "Vincent Velasco"): Music, Instagram (https://ig.mcvindle.com), TikTok (https://tt.mcvindle.com), Games; "Now Playing" is appended while a song plays. No Links/About/Settings sub-menus (MIT notice kept in `THIRD_PARTY_NOTICES.md`).
+- Root menu (header "Vincent Velasco"): Music, Instagram (https://www.instagram.com/mcvindle), TikTok (https://www.tiktok.com/@mcvindle), Twitch (https://www.twitch.tv/mcvindle), Games — each with a live unavatar.io avatar and "VV" fallback; "Now Playing" is appended while a song plays. No Links/About/Settings sub-menus (MIT notice kept in `THIRD_PARTY_NOTICES.md`).
 - Music: opens straight into Cover Flow of the 10 songs in `src/data/favorite-songs.ts` (no sign-in). Source geometry adapted: 112px covers, `perspective: 500px`, active flat at `translateZ(0)`, flanks `rotateY(±60deg) translateZ(-80px)` (source used ±70deg/-65px), `transform 0.35s ease-out`. Floor reflection is a flipped duplicate image with a gradient mask (works without `-webkit-box-reflect`). Title/artist centered below. Landing on an album plays its 30s `previewUrl` after a 400ms settle and cross-fades a blurred, darkened cover backdrop (0.6s). Center = Now Playing; Menu = back.
 - Games: Brick and Solitaire engines ported unchanged except asset paths.
 
