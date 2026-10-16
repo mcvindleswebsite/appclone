@@ -97,12 +97,13 @@ const Scrubber = ({ isScrubbing }: { isScrubbing: boolean }) => {
   );
 };
 
-const VOLUME_STEP = 0.04;
+/** Volume change per wheel tick (20 ticks from mute to max). */
+const VOLUME_STEP = 0.05;
 const VOLUME_ACTIVE_MS = 3000;
 
 /** Wheel adjusts volume; center toggles the scrubber, as on the real iPod. */
 const Controls = () => {
-  const { volume, setVolume } = useAudioPlayer();
+  const { volume, changeVolume } = useAudioPlayer();
   const { isTopView } = useViewContext();
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [volumeActive, setVolumeActive] = useState(false);
@@ -116,12 +117,12 @@ const Controls = () => {
     []
   );
 
-  const changeVolume = (delta: number) => {
+  const nudgeVolume = (delta: number) => {
     if (!isActive || isScrubbing) return;
     setVolumeActive(true);
     if (volumeTimer.current) clearTimeout(volumeTimer.current);
     volumeTimer.current = setTimeout(() => setVolumeActive(false), VOLUME_ACTIVE_MS);
-    setVolume(Math.max(volume + delta, delta < 0 ? 0.01 : 0));
+    changeVolume(delta);
   };
 
   useWindowEvent("centerclick", () => {
@@ -129,8 +130,9 @@ const Controls = () => {
     setVolumeActive(false);
     setIsScrubbing((value) => !value);
   });
-  useWindowEvent("forwardscroll", () => changeVolume(VOLUME_STEP));
-  useWindowEvent("backwardscroll", () => changeVolume(-VOLUME_STEP));
+  // Clockwise = louder, counter-clockwise = quieter; one step per tick.
+  useWindowEvent("forwardscroll", () => nudgeVolume(VOLUME_STEP));
+  useWindowEvent("backwardscroll", () => nudgeVolume(-VOLUME_STEP));
 
   return (
     <div className={styles.controls}>

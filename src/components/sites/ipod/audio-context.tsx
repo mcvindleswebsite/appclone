@@ -30,14 +30,18 @@ type AudioContextValue = {
   nowPlayingItem?: FavoriteSong;
   queue: FavoriteSong[];
   playbackInfo: PlaybackInfo;
+  /** 0.0 (muted) – 1.0 (max), mirrored onto the audio element. */
   volume: number;
-  setVolume: (volume: number) => void;
+  /** Nudges volume by `delta`, clamped to [0, 1]. */
+  changeVolume: (delta: number) => void;
   play: (queue: FavoriteSong[], startIndex: number) => void;
   togglePlayPause: () => void;
   skipNext: () => void;
   skipPrevious: () => void;
   seekToTime: (time: number) => void;
 };
+
+const INITIAL_VOLUME = 0.5;
 
 const IDLE_PLAYBACK: PlaybackInfo = {
   isPlaying: false,
@@ -57,7 +61,10 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
   const [queue, setQueue] = useState<FavoriteSong[]>([]);
   const [queueIndex, setQueueIndex] = useState(-1);
   const [playbackInfo, setPlaybackInfo] = useState<PlaybackInfo>(IDLE_PLAYBACK);
-  const [volume, setVolumeState] = useState(0.5);
+  const [volume, setVolumeState] = useState(INITIAL_VOLUME);
+  // Source of truth for the wheel: fast spins fire several ticks per frame,
+  // so steps accumulate here instead of on a possibly stale render value.
+  const volumeRef = useRef(INITIAL_VOLUME);
 
   const nowPlayingItem = queue[queueIndex];
 
@@ -90,6 +97,7 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const audio = new Audio();
     audio.preload = "auto";
+    audio.volume = volumeRef.current;
     audioRef.current = audio;
     const events = [
       "play",
@@ -108,10 +116,6 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
       audioRef.current = null;
     };
   }, [syncPlayback]);
-
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume;
-  }, [volume]);
 
   const play = useCallback(
     (nextQueue: FavoriteSong[], startIndex: number) => {
@@ -158,8 +162,14 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
     if (audio) audio.currentTime = time;
   }, []);
 
-  const setVolume = useCallback((next: number) => {
-    setVolumeState(Math.min(Math.max(next, 0), 1));
+  const changeVolume = useCallback((delta: number) => {
+    // Round to hundredths so repeated ±0.05 steps land exactly on 0 and 1.
+    const next = Math.round(Math.min(Math.max(volumeRef.current + delta, 0), 1) * 100) / 100;
+    if (next === volumeRef.current) return;
+    volumeRef.current = next;
+    // Write straight to the element so audio responds on the same tick.
+    if (audioRef.current) audioRef.current.volume = next;
+    setVolumeState(next);
   }, []);
 
   /** Advance through the queue; clear "now playing" after the last track. */
@@ -195,7 +205,7 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
       queue,
       playbackInfo,
       volume,
-      setVolume,
+      changeVolume,
       play,
       togglePlayPause,
       skipNext,
@@ -207,7 +217,7 @@ export const AudioProvider = ({ children }: { children: ReactNode }) => {
       queue,
       playbackInfo,
       volume,
-      setVolume,
+      changeVolume,
       play,
       togglePlayPause,
       skipNext,
