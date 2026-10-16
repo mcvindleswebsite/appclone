@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
 
 import { useAudioPlayer } from "./audio-context";
 import { useWindowEvent } from "./events";
@@ -101,14 +102,99 @@ const Scrubber = ({ isScrubbing }: { isScrubbing: boolean }) => {
 const VOLUME_STEP = 0.05;
 const VOLUME_ACTIVE_MS = 3000;
 
-/** Wheel adjusts volume; center toggles the scrubber, as on the real iPod. */
-const Controls = () => {
-  const { volume, changeVolume } = useAudioPlayer();
+/**
+ * Center-button screen modes, cycled with `(mode + 1) % 4`:
+ * 0 track view (wheel = volume) · 1 scrubber (wheel = seek) ·
+ * 2 album art focus (wheel = volume) · 3 rating (wheel = stars).
+ */
+type ScreenMode = 0 | 1 | 2 | 3;
+const MODE_COUNT = 4;
+/** Modes 1–3 fall back to the track view after this long without input. */
+const MODE_IDLE_RESET_MS = 6000;
+const MAX_RATING = 5;
+
+const RATINGS_KEY = "mcvindle-ipod:ratings";
+
+/** Per-song star ratings, kept in this visitor's browser. */
+const useRatings = () => {
+  const [ratings, setRatings] = useState<Record<string, number>>(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem(RATINGS_KEY) ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+
+  const setRating = (songId: string, rating: number) => {
+    setRatings((prev) => {
+      const next = { ...prev, [songId]: rating };
+      try {
+        window.localStorage.setItem(RATINGS_KEY, JSON.stringify(next));
+      } catch {
+        // Storage unavailable (private mode); the rating lasts for this visit.
+      }
+      return next;
+    });
+  };
+
+  return { ratings, setRating };
+};
+
+const Controls = ({ mode, volumeActive }: { mode: ScreenMode; volumeActive: boolean }) => {
+  const { volume } = useAudioPlayer();
   const { isTopView } = useViewContext();
-  const [isScrubbing, setIsScrubbing] = useState(false);
+  const isScrubbing = mode === 1;
+  const showVolume = volumeActive && !isScrubbing;
+
+  return (
+    <div className={styles.controls}>
+      <div className={styles.controlsLayer} data-hidden={showVolume ? "false" : "right"}>
+        <VolumeBar percent={volume * 100} />
+      </div>
+      <div className={styles.controlsLayer} data-hidden={isScrubbing || showVolume ? "left" : "false"}>
+        <TrackProgress />
+      </div>
+      <div className={styles.controlsLayer} data-hidden={isScrubbing ? "false" : "right"}>
+        <Scrubber isScrubbing={isScrubbing && isTopView("nowPlaying")} />
+      </div>
+    </div>
+  );
+};
+
+const Stars = ({ rating }: { rating: number }) => (
+  <div className={styles.ratingStars} role="img" aria-label={`${rating} of ${MAX_RATING} stars`}>
+    {Array.from({ length: MAX_RATING }, (_, i) => (
+      <span key={i} className={styles.ratingStar} data-filled={i < rating}>
+        {i < rating ? "★" : "☆"}
+      </span>
+    ))}
+  </div>
+);
+
+export const NowPlaying = () => {
+  const { nowPlayingItem, queue, changeVolume } = useAudioPlayer();
+  const { isTopView, hideView } = useViewContext();
+  const { ratings, setRating } = useRatings();
+  const [mode, setMode] = useState<ScreenMode>(0);
+  /** Bumped on every wheel input; restarts the idle-reset countdown. */
+  const [lastInput, setLastInput] = useState(0);
   const [volumeActive, setVolumeActive] = useState(false);
   const volumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isActive = isTopView("nowPlaying");
+  const position = nowPlayingItem ? queue.indexOf(nowPlayingItem) + 1 : 0;
+  const rating = nowPlayingItem ? (ratings[nowPlayingItem.id] ?? 0) : 0;
+
+  // Leave the view once the queue finishes.
+  useEffect(() => {
+    if (!nowPlayingItem && isTopView("nowPlaying")) hideView();
+  }, [nowPlayingItem, isTopView, hideView]);
+
+  // Modes 1–3 return to the track view after 6 seconds of no input.
+  useEffect(() => {
+    if (mode === 0) return;
+    const timeout = setTimeout(() => setMode(0), MODE_IDLE_RESET_MS);
+    return () => clearTimeout(timeout);
+  }, [mode, lastInput]);
 
   useEffect(
     () => () => {
@@ -117,59 +203,55 @@ const Controls = () => {
     []
   );
 
+  const registerInput = () => setLastInput((n) => n + 1);
+
   const nudgeVolume = (delta: number) => {
-    if (!isActive || isScrubbing) return;
     setVolumeActive(true);
     if (volumeTimer.current) clearTimeout(volumeTimer.current);
     volumeTimer.current = setTimeout(() => setVolumeActive(false), VOLUME_ACTIVE_MS);
     changeVolume(delta);
   };
 
+  /** Clockwise = +1, counter-clockwise = −1; meaning depends on the mode. */
+  const handleWheel = (direction: 1 | -1) => {
+    if (!isActive) return;
+    registerInput();
+    if (mode === 0 || mode === 2) nudgeVolume(direction * VOLUME_STEP);
+    if (mode === 3 && nowPlayingItem) {
+      setRating(nowPlayingItem.id, Math.min(Math.max(rating + direction, 0), MAX_RATING));
+    }
+    // Mode 1: the Scrubber listens for the wheel itself.
+  };
+
+  useWindowEvent("forwardscroll", () => handleWheel(1));
+  useWindowEvent("backwardscroll", () => handleWheel(-1));
   useWindowEvent("centerclick", () => {
     if (!isActive) return;
+    registerInput();
     setVolumeActive(false);
-    setIsScrubbing((value) => !value);
+    setMode((current) => ((current + 1) % MODE_COUNT) as ScreenMode);
   });
-  // Clockwise = louder, counter-clockwise = quieter; one step per tick.
-  useWindowEvent("forwardscroll", () => nudgeVolume(VOLUME_STEP));
-  useWindowEvent("backwardscroll", () => nudgeVolume(-VOLUME_STEP));
+  // Play/pause and skip still act directly (handled by the audio engine);
+  // they just count as activity so the current mode stays open.
+  useWindowEvent("playpauseclick", () => isActive && registerInput());
+  useWindowEvent("forwardclick", () => isActive && registerInput());
+  useWindowEvent("backwardclick", () => isActive && registerInput());
+
+  const coverArt = nowPlayingItem?.coverArt ?? "/sites/ipod/default_album_artwork.png";
 
   return (
-    <div className={styles.controls}>
-      <div className={styles.controlsLayer} data-hidden={isScrubbing || !volumeActive ? "right" : "false"}>
-        <VolumeBar percent={volume * 100} />
-      </div>
-      <div className={styles.controlsLayer} data-hidden={isScrubbing || volumeActive ? "left" : "false"}>
-        <TrackProgress />
-      </div>
-      <div className={styles.controlsLayer} data-hidden={isScrubbing ? "false" : "right"}>
-        <Scrubber isScrubbing={isScrubbing && isActive} />
-      </div>
-    </div>
-  );
-};
-
-export const NowPlaying = () => {
-  const { nowPlayingItem, queue } = useAudioPlayer();
-  const { isTopView, hideView } = useViewContext();
-  const position = nowPlayingItem ? queue.indexOf(nowPlayingItem) + 1 : 0;
-
-  // Leave the view once the queue finishes.
-  useEffect(() => {
-    if (!nowPlayingItem && isTopView("nowPlaying")) hideView();
-  }, [nowPlayingItem, isTopView, hideView]);
-
-  return (
-    <div className={styles.nowPlaying}>
+    <div className={styles.nowPlaying} data-mode={mode}>
       <div className={styles.nowPlayingMetadata}>
-        <div className={styles.nowPlayingArtworkContainer}>
-          <img
-            className={styles.nowPlayingCover}
-            src={nowPlayingItem?.coverArt ?? "/sites/ipod/default_album_artwork.png"}
-            alt={nowPlayingItem ? `${nowPlayingItem.title} cover art` : "Album artwork"}
-          />
-        </div>
-        <div className={styles.nowPlayingInfo}>
+        <motion.div layout transition={{ duration: 0.4, ease: "easeInOut" }} className={styles.nowPlayingArtworkContainer}>
+          <div className={styles.nowPlayingArtworkTilt}>
+            <img
+              className={styles.nowPlayingCover}
+              src={coverArt}
+              alt={nowPlayingItem ? `${nowPlayingItem.title} cover art` : "Album artwork"}
+            />
+          </div>
+        </motion.div>
+        <div className={styles.nowPlayingInfo} aria-hidden={mode === 2}>
           <div className={styles.nowPlayingTitle}>{nowPlayingItem?.title}</div>
           <div className={styles.nowPlayingSubtext}>{nowPlayingItem?.artist}</div>
           <div className={styles.nowPlayingSubtext}>{nowPlayingItem?.album}</div>
@@ -181,7 +263,22 @@ export const NowPlaying = () => {
         </div>
       </div>
       <div className={styles.controlsRow}>
-        <Controls />
+        <Controls mode={mode} volumeActive={volumeActive} />
+      </div>
+      <div className={styles.ratingOverlay} data-visible={mode === 3} aria-hidden={mode !== 3}>
+        <img className={styles.ratingBackdrop} src={coverArt} alt="" />
+        <div className={styles.ratingContent}>
+          <div className={styles.ratingTitle}>{nowPlayingItem?.title}</div>
+          <div className={styles.ratingDetail}>{nowPlayingItem?.artist}</div>
+          {nowPlayingItem?.album && <div className={styles.ratingDetail}>{nowPlayingItem.album}</div>}
+          {position > 0 && (
+            <div className={styles.ratingDetail}>
+              Track {position} of {queue.length}
+            </div>
+          )}
+          <Stars rating={rating} />
+          <div className={styles.ratingHint}>Turn the wheel to rate</div>
+        </div>
       </div>
     </div>
   );

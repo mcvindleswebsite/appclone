@@ -712,26 +712,56 @@
 /* ---------- Now playing ---------- */
 
 .nowPlaying {
+  position: relative;
   height: 100%;
   overflow: hidden;
 }
 
 .nowPlayingMetadata {
+  position: relative;
   display: flex;
   height: 70%;
   padding: 0 0.5rem;
-  perspective: 1000px;
 }
 
+/* Outer box: size and position (animated by motion's layout prop). */
 .nowPlayingArtworkContainer {
   height: 8em;
   width: 8em;
   margin: auto 0.75rem;
+  flex-shrink: 0;
+  perspective: 1000px;
+}
+
+/* Inner box: the classic 35° tilt and reflection. */
+.nowPlayingArtworkTilt {
+  width: 100%;
+  height: 100%;
   -webkit-box-reflect: below 0px
     linear-gradient(to bottom, transparent 0%, transparent 70%, rgba(240, 240, 240, 0.2) 100%);
-  transform-style: preserve-3d;
   transform: rotateY(35deg);
-  flex-shrink: 0;
+  transition: transform 0.4s ease-in-out;
+}
+
+/* Mode 2: album art straightens, grows, and centers; text fades away. */
+.nowPlaying[data-mode="2"] .nowPlayingArtworkContainer {
+  width: 9.5em;
+  height: 9.5em;
+  margin: auto;
+}
+
+.nowPlaying[data-mode="2"] .nowPlayingArtworkTilt {
+  transform: rotateY(0deg);
+}
+
+.nowPlaying[data-mode="2"] .nowPlayingInfo {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  translate: 0 -50%;
+  width: 40%;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .nowPlayingCover {
@@ -742,6 +772,7 @@
 }
 
 .nowPlayingInfo {
+  transition: opacity 0.3s ease;
   flex: 1;
   margin: auto 0 auto 0.5rem;
   min-width: 0;
@@ -871,6 +902,86 @@
   height: 100%;
   right: -8px;
   filter: brightness(0.85);
+}
+
+/* Mode 3: rating overlay over a dark, blurred copy of the cover. */
+.ratingOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: black;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+.ratingOverlay[data-visible="true"] {
+  opacity: 1;
+}
+
+.ratingBackdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  transform: scale(1.25);
+  filter: blur(14px) brightness(0.45) saturate(1.2);
+}
+
+.ratingContent {
+  position: relative;
+  max-width: 100%;
+  padding: 0 1rem;
+  text-align: center;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.ratingTitle {
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ratingDetail {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ratingStars {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 10px;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.ratingStar {
+  color: rgba(255, 255, 255, 0.45);
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.ratingStar[data-filled="true"] {
+  color: #ffd34d;
+  transform: scale(1.08);
+}
+
+.ratingHint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
 }
 
 /* ---------- Games ---------- */
