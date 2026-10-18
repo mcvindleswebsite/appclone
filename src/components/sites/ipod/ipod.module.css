@@ -9,6 +9,8 @@
   background-color: #f8f9fa;
   transition: background-color 0.5s ease;
   color: black;
+  /* Depth for the showcase spin; flat (no-op) while the device is untransformed. */
+  perspective: 1200px;
   /* Undo Tailwind preflight's 1.5 so rows match the source's 27px rhythm. */
   line-height: normal;
   font-family:
@@ -45,6 +47,11 @@
   background-color: #000000;
 }
 
+/* Showcase spin: the page dims behind the receding device. */
+.page[data-showcase="true"] {
+  background-color: #0d0d0d;
+}
+
 @media (display-mode: standalone) {
   .page {
     height: 100vh;
@@ -53,14 +60,107 @@
 
 /* ---------- Device shell ---------- */
 
+/* 3D carrier for the two faces. The shell clips (overflow: hidden), which
+   would flatten 3D, so the rotation lives on this wrapper instead. */
+.device {
+  position: relative;
+  height: 100%;
+  width: 370px;
+  max-height: 37em;
+  margin: auto;
+  transform-style: preserve-3d;
+  touch-action: pan-x pan-y;
+}
+
+.device[data-spinning="true"] {
+  animation: showcaseSpin 3s both;
+  pointer-events: none;
+}
+
+@keyframes showcaseSpin {
+  0% {
+    transform: scale(1) rotateY(0deg);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  22% {
+    transform: scale(0.75) rotateY(0deg);
+    animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+  }
+  78% {
+    transform: scale(0.75) rotateY(360deg);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  /* rotateY(360deg) is the identity, so dropping the animation can't pop. */
+  100% {
+    transform: scale(1) rotateY(360deg);
+  }
+}
+
+.backFace {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 30px;
+  overflow: hidden;
+  transform: rotateY(180deg);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  /* Polished stainless steel: soft highlight, fine brushing, banded chrome. */
+  background:
+    radial-gradient(ellipse at 30% 18%, rgba(255, 255, 255, 0.85), transparent 45%),
+    radial-gradient(ellipse at 75% 85%, rgba(255, 255, 255, 0.45), transparent 40%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.07) 0 1px,
+      rgba(0, 0, 0, 0.045) 1px 2px,
+      transparent 2px 3px
+    ),
+    linear-gradient(
+      135deg,
+      #8e9196 0%,
+      #f4f5f7 22%,
+      #a9acb1 40%,
+      #eceef0 58%,
+      #7d8085 78%,
+      #d9dbde 100%
+    );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 0 0 2.4em rgba(0, 0, 0, 0.45);
+}
+
+/* Laser engraving: dark recess with a bright lower lip. */
+.engraving {
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  line-height: 1.7;
+  color: rgba(55, 58, 63, 0.78);
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.75),
+    0 -1px 0 rgba(0, 0, 0, 0.18);
+}
+
+.engraving p {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .device[data-spinning="true"] {
+    animation: none;
+  }
+}
+
 .shell {
   position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
-  width: 370px;
-  max-height: 37em;
-  margin: auto;
+  width: 100%;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
   border-radius: 30px;
   box-shadow: inset 0 0 2.4em #555;
   -webkit-box-reflect: below 0px
@@ -74,11 +174,18 @@
 }
 
 @media (max-width: 576px) {
-  .shell {
-    animation: none;
+  .device {
     width: 100vw;
     max-height: unset;
+  }
+
+  .shell,
+  .backFace {
     border-radius: 0;
+  }
+
+  .shell {
+    animation: none;
     -webkit-box-reflect: unset;
   }
 }
