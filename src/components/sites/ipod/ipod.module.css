@@ -187,6 +187,33 @@
   opacity: 0.8;
 }
 
+/* Text labels a game puts on the ring, cut like the MENU glyph: bold caps in
+   the theme's button color, sized so "DOUBLE" spans about MENU's 45px. */
+.wheelLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 17px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+
+.wheelLabel[data-enabled="false"] {
+  opacity: 0.35;
+}
+
+/* Side labels sit a little closer to the rim so they clear the center button. */
+.placeLeft:has(.wheelLabel),
+.placeRight:has(.wheelLabel) {
+  padding-inline: 8px;
+}
+
+.centerButton:has(.wheelLabel) {
+  display: grid;
+  place-items: center;
+}
+
 /* ---------- Screen layout ---------- */
 
 .viewManager {

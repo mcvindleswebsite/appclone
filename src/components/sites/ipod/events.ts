@@ -13,7 +13,11 @@ export type IpodEvent =
   | "backwardclick"
   | "playpauseclick"
   | "forwardscroll"
-  | "backwardscroll";
+  | "backwardscroll"
+  /** Ring buttons while a view has relabeled the wheel (see wheel-override.ts). */
+  | "wheelleft"
+  | "wheelright"
+  | "wheelbottom";
 
 export type ScrollDirection = "clockwise" | "counter-clockwise";
 export type ScrollEventDetail = { velocity: number };

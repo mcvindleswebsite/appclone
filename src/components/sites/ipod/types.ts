@@ -10,6 +10,7 @@ export type ViewId =
   | "nowPlaying"
   | "brickGame"
   | "solitaireGame"
+  | "blackjackGame"
   | "about";
 
 type SharedOptionProps = {

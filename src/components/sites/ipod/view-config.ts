@@ -9,5 +9,6 @@ export const VIEW_CONFIG: Record<ViewId, ViewConfig> = {
   nowPlaying: { title: "Now Playing", split: false },
   brickGame: { title: "Brick", split: false, disableLongPress: true },
   solitaireGame: { title: "Solitaire", split: false, disableLongPress: true },
+  blackjackGame: { title: "Blackjack", split: false },
   about: { title: "About", split: false },
 };

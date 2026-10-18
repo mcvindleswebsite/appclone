@@ -7,7 +7,7 @@ import { profile } from "@/data/profile";
 
 import { useAudioPlayer } from "./audio-context";
 import { CoverFlow } from "./CoverFlow";
-import { BrickGameView, SolitaireGameView } from "./games/GameCanvas";
+import { BlackjackGameView, BrickGameView, SolitaireGameView } from "./games/GameCanvas";
 import { useViewContext } from "./ipod-context";
 import { NowPlaying } from "./NowPlaying";
 import { SelectableList } from "./screen-parts";
@@ -136,6 +136,7 @@ const MusicView = () => {
 const gameOptions: ListOption[] = [
   { type: "view", label: "Brick", viewId: "brickGame", preview: "games" },
   { type: "view", label: "Solitaire", viewId: "solitaireGame", preview: "games" },
+  { type: "view", label: "Blackjack", viewId: "blackjackGame", preview: "games" },
 ];
 
 const GamesView = () => <ListView viewId="games" options={gameOptions} />;
@@ -171,5 +172,6 @@ export const VIEW_COMPONENTS: Record<ViewId, ComponentType> = {
   nowPlaying: NowPlayingView,
   brickGame: BrickGameView,
   solitaireGame: SolitaireGameView,
+  blackjackGame: BlackjackGameView,
   about: AboutView,
 };

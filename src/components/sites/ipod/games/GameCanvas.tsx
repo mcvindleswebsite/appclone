@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react";
 
 import { useViewContext } from "../ipod-context";
 import { useMenuHideView } from "../use-selectable-list";
+import { setWheelOverride } from "../wheel-override";
 import styles from "../ipod.module.css";
+import BlackjackGame from "./blackjack/Game";
 import BrickGame from "./brick/Game";
 import SolitaireGame from "./solitaire/Game";
 
@@ -104,6 +106,55 @@ export const SolitaireGameView = () => {
       <canvas
         ref={canvasRef}
         id="solitaireCanvas"
+        className={styles.gameCanvas}
+        width={size.width * dpr}
+        height={size.height * dpr}
+        style={{ width: size.width, height: size.height }}
+      >
+        Your browser does not support this feature
+      </canvas>
+    </div>
+  );
+};
+
+/** Blackjack relabels the click wheel (Stand / Hit / Double / Split) while open. */
+export const BlackjackGameView = () => {
+  useMenuHideView("blackjackGame");
+  const { containerRef, size } = useContainerSize();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gameRef = useRef<BlackjackGame | null>(null);
+  const [dpr] = useState(getDpr);
+  const ready = size.width > 0 && size.height > 0;
+
+  useEffect(() => {
+    const context = canvasRef.current?.getContext("2d");
+    if (!ready || !context) return;
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const game = new BlackjackGame(context, size.width, size.height, (controls) =>
+      setWheelOverride({ viewId: "blackjackGame", ...controls })
+    );
+    game.init();
+    gameRef.current = game;
+    return () => {
+      game.cleanup();
+      gameRef.current = null;
+      setWheelOverride(null);
+    };
+    // Created once; later size changes go through game.resize below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, dpr]);
+
+  useEffect(() => {
+    const context = canvasRef.current?.getContext("2d");
+    if (!gameRef.current || !context || !ready) return;
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    gameRef.current.resize(size.width, size.height);
+  }, [size, dpr, ready]);
+
+  return (
+    <div ref={containerRef} className={styles.solitaireRoot}>
+      <canvas
+        ref={canvasRef}
         className={styles.gameCanvas}
         width={size.width * dpr}
         height={size.height * dpr}

@@ -11,7 +11,7 @@ import {
   useWindowEvent,
   type ScrollDirection,
 } from "./events";
-import { useSettings } from "./ipod-context";
+import { useSettings, useViewContext } from "./ipod-context";
 import {
   FastForwardIcon,
   MenuIcon,
@@ -19,6 +19,7 @@ import {
   RewindIcon,
 } from "./icons";
 import { DEVICE_THEMES } from "./themes";
+import { useWheelOverride, type WheelButtonLabel } from "./wheel-override";
 import styles from "./ipod.module.css";
 
 /** Degrees the finger must travel before the wheel registers a tick. */
@@ -61,6 +62,13 @@ const getScrollDirection = (angleDelta: number, threshold: number): ScrollDirect
   return angleDelta > 0 ? "clockwise" : "counter-clockwise";
 };
 
+/** A text label in place of a ring glyph; dimmed while its action is unavailable. */
+const WheelLabel = ({ button, color }: { button: WheelButtonLabel; color: string }) => (
+  <span className={styles.wheelLabel} style={{ color }} data-enabled={button.enabled}>
+    {button.label}
+  </span>
+);
+
 const useLongPress = (onPress: () => void, onLongPress: () => void) => {
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRef = useRef(false);
@@ -94,6 +102,14 @@ const useLongPress = (onPress: () => void, onLongPress: () => void) => {
 export const ClickWheel = () => {
   const { deviceTheme, triggerHaptics } = useSettings();
   const theme = DEVICE_THEMES[deviceTheme].clickwheel;
+  const { isTopView } = useViewContext();
+  const override = useWheelOverride();
+  // Labels follow the top view, so they revert the instant it's left.
+  const labels = override && isTopView(override.viewId) ? override : null;
+  const labelsRef = useRef(labels);
+  useEffect(() => {
+    labelsRef.current = labels;
+  });
 
   const rootRef = useRef<HTMLDivElement>(null);
   const rewindRef = useRef<HTMLDivElement>(null);
@@ -109,12 +125,14 @@ export const ClickWheel = () => {
 
   const handleWheelPress = useCallback((point: Point) => {
     // Menu has its own pointer handlers (for long press).
+    // Relabeled buttons send their own events so the music controls stay put.
+    const relabeled = labelsRef.current !== null;
     if (isPointWithin(point, rewindRef.current)) {
-      dispatchIpodEvent("backwardclick");
+      dispatchIpodEvent(relabeled ? "wheelleft" : "backwardclick");
     } else if (isPointWithin(point, forwardRef.current)) {
-      dispatchIpodEvent("forwardclick");
+      dispatchIpodEvent(relabeled ? "wheelright" : "forwardclick");
     } else if (isPointWithin(point, playPauseRef.current)) {
-      dispatchIpodEvent("playpauseclick");
+      dispatchIpodEvent(relabeled ? "wheelbottom" : "playpauseclick");
     }
   }, []);
 
@@ -252,16 +270,18 @@ export const ClickWheel = () => {
         <MenuIcon color={theme.button} />
       </div>
       <div ref={rewindRef} className={`${styles.wheelButton} ${styles.placeLeft}`}>
-        <RewindIcon color={theme.button} />
+        {labels ? <WheelLabel button={labels.left} color={theme.button} /> : <RewindIcon color={theme.button} />}
       </div>
       <div className={`${styles.wheelButton} ${styles.placeCenter}`}>
-        <div className={styles.centerButton} {...centerHandlers} />
+        <div className={styles.centerButton} {...centerHandlers}>
+          {labels && <WheelLabel button={labels.center} color={theme.button} />}
+        </div>
       </div>
       <div ref={forwardRef} className={`${styles.wheelButton} ${styles.placeRight}`}>
-        <FastForwardIcon color={theme.button} />
+        {labels ? <WheelLabel button={labels.right} color={theme.button} /> : <FastForwardIcon color={theme.button} />}
       </div>
       <div ref={playPauseRef} className={`${styles.wheelButton} ${styles.placeBottom}`}>
-        <PlayPauseIcon color={theme.button} />
+        {labels ? <WheelLabel button={labels.bottom} color={theme.button} /> : <PlayPauseIcon color={theme.button} />}
       </div>
     </motion.div>
   );
