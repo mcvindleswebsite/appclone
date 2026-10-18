@@ -1,13 +1,17 @@
 /* Measurements mirror iPod.js (tannerv.com/ipod). Units: XS 8px, SM 12px, MD 16px, LG 24px. */
 
 .page {
+  box-sizing: border-box;
   height: 100dvh;
+  width: 100vw;
   min-height: 550px;
   display: grid;
   overflow: auto;
-  /* Light neutral to match the Silver shell; see [data-device-theme] below. */
-  background-color: #f8f9fa;
-  transition: background-color 0.5s ease;
+  /* Black edge to edge; the safe-area padding keeps the device clear of the
+     notch / Dynamic Island and home indicator while the black fills the glass. */
+  background-color: #000000 !important;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
   color: black;
   /* Undo Tailwind preflight's 1.5 so rows match the source's 27px rhythm. */
   line-height: normal;
@@ -32,17 +36,8 @@
   }
 }
 
-/* Before mount, fall back to the media query so dark systems never flash light. */
-@media (prefers-color-scheme: dark) {
-  .page:not([data-device-theme]) {
-    background-color: #000000;
-  }
-}
-
-/* The page follows the shell: Silver → light neutral, Black → solid black. */
 .page[data-device-theme="black"] {
   color-scheme: dark;
-  background-color: #000000;
 }
 
 @media (display-mode: standalone) {
@@ -114,7 +109,8 @@
 
 @media (max-width: 576px) {
   .screen {
-    margin: calc(1rem + env(safe-area-inset-top)) 1rem 0;
+    /* The page's safe-area padding already clears the notch. */
+    margin: 1rem 1rem 0;
   }
 }
 

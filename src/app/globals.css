@@ -128,3 +128,13 @@
     @apply font-sans;
   }
 }
+
+/* Edge-to-edge on iPhone: black behind the status bar, home indicator, and
+   overscroll, with the page itself locked to the visible viewport. */
+html,
+body {
+  background-color: #000000 !important;
+  height: 100dvh;
+  width: 100vw;
+  overflow: hidden;
+}

@@ -25,7 +25,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
+  // Black browser chrome / status bar to match the edge-to-edge background.
+  themeColor: "#000000",
 };
 
 export default function RootLayout({
