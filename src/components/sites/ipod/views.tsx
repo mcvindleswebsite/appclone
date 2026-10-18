@@ -150,13 +150,16 @@ const aboutOptions: ListOption[] = [
   { type: "link", label: "Phone", sublabel: "(909) 771-9891", url: "tel:9097719891" },
 ];
 
+/** 1.0.<commit count>, computed at build time in next.config.ts. */
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "1.0.0";
+
 /** System info: tappable contact lines with the version pinned to the bottom. */
 const AboutView = () => {
   const activeIndex = useSelectableList("about", aboutOptions);
   return (
     <div className={styles.aboutView}>
       <SelectableList options={aboutOptions} activeIndex={activeIndex} />
-      <p className={styles.aboutVersion}>Version 1.0.0</p>
+      <p className={styles.aboutVersion}>Version {APP_VERSION}</p>
     </div>
   );
 };
