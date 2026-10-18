@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
-import { favoriteSongs } from "@/data/favorite-songs";
 import { profile, type ProfileLink } from "@/data/profile";
 
 import { useAudioPlayer } from "./audio-context";
 import { useViewContext } from "./ipod-context";
 import { Avatar } from "./screen-parts";
 import type { PreviewId } from "./types";
+import { useShuffledSongs } from "./use-shuffled-songs";
 import styles from "./ipod.module.css";
 
 /* eslint-disable @next/next/no-img-element -- remote cover art and static glyphs */
@@ -20,7 +20,11 @@ const previewSlideRight = {
   exit: { x: "130%", opacity: 0, transition: { duration: 0.4, ease: "easeInOut" as const } },
 };
 
-const coverUrls = favoriteSongs.map((song) => song.coverArt);
+/** Cover art in the same shuffled order as the Music list. */
+const useCoverUrls = () => {
+  const songs = useShuffledSongs();
+  return useMemo(() => songs.map((song) => song.coverArt), [songs]);
+};
 
 /** Pans across cover art, cross-fading to the next cover every 5 seconds. */
 const KenBurns = ({ urls }: { urls: string[] }) => {
@@ -60,17 +64,20 @@ const KenBurns = ({ urls }: { urls: string[] }) => {
   );
 };
 
-const MusicPreview = () => (
-  <motion.div className={styles.previewFill} style={{ zIndex: 1 }} {...previewSlideRight}>
-    {coverUrls.length ? (
-      <KenBurns urls={coverUrls} />
-    ) : (
-      <div className={styles.previewCard}>
-        <h3 className={styles.previewText}>No favorites yet</h3>
-      </div>
-    )}
-  </motion.div>
-);
+const MusicPreview = () => {
+  const coverUrls = useCoverUrls();
+  return (
+    <motion.div className={styles.previewFill} style={{ zIndex: 1 }} {...previewSlideRight}>
+      {coverUrls.length ? (
+        <KenBurns urls={coverUrls} />
+      ) : (
+        <div className={styles.previewCard}>
+          <h3 className={styles.previewText}>No favorites yet</h3>
+        </div>
+      )}
+    </motion.div>
+  );
+};
 
 const GamesPreview = () => (
   <div className={styles.previewCard}>
@@ -101,7 +108,7 @@ const NowPlayingPreview = () => {
   );
 };
 
-const MusicPreviewStatic = () => <KenBurns urls={coverUrls} />;
+const MusicPreviewStatic = () => <KenBurns urls={useCoverUrls()} />;
 
 const renderStaticPreview = (preview: Exclude<PreviewId, "music">) => {
   if (preview === "games") return <GamesPreview />;

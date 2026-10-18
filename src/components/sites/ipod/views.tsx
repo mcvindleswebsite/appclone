@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, type ComponentType } from "react";
 
-import { favoriteSongs, type FavoriteSong } from "@/data/favorite-songs";
+import type { FavoriteSong } from "@/data/favorite-songs";
 import { profile } from "@/data/profile";
 
 import { useAudioPlayer } from "./audio-context";
@@ -13,6 +13,7 @@ import { NowPlaying } from "./NowPlaying";
 import { SelectableList } from "./screen-parts";
 import type { ListOption, ViewId } from "./types";
 import { useMenuHideView, useSelectableList } from "./use-selectable-list";
+import { useShuffledSongs } from "./use-shuffled-songs";
 import styles from "./ipod.module.css";
 
 /* eslint-disable @next/next/no-img-element -- remote cover art */
@@ -55,14 +56,15 @@ const HomeView = () => {
   return <ListView viewId="home" options={options} />;
 };
 
-const songOptions: ListOption[] = favoriteSongs.map((song, index) => ({
-  type: "song",
-  label: song.title,
-  sublabel: song.artist,
-  queue: favoriteSongs,
-  startIndex: index,
-  showNowPlayingView: true,
-}));
+const toSongOptions = (songs: FavoriteSong[]): ListOption[] =>
+  songs.map((song, index) => ({
+    type: "song",
+    label: song.title,
+    sublabel: song.artist,
+    queue: songs,
+    startIndex: index,
+    showNowPlayingView: true,
+  }));
 
 /** Wait for the wheel to settle so fast spins don't thrash the audio. */
 const SNIPPET_DELAY_MS = 400;
@@ -99,21 +101,24 @@ const useFocusSnippet = (viewId: ViewId, songs: FavoriteSong[], focusedSong?: Fa
 /**
  * The Music screen: Cover Flow over a blurred, darkened copy of the centered
  * song's cover, which cross-fades as albums land in the middle. The wheel
- * slides through covers; center opens Now Playing; Menu goes back.
+ * slides through covers; center opens Now Playing; Menu goes back. Songs
+ * appear in this page load's shuffled order, which the play queue follows too.
  */
 const MusicView = () => {
+  const songs = useShuffledSongs();
+  const songOptions = useMemo(() => toSongOptions(songs), [songs]);
   const activeIndex = useSelectableList("music", songOptions);
-  const focusedSong = favoriteSongs[activeIndex];
-  useFocusSnippet("music", favoriteSongs, focusedSong);
+  const focusedSong = songs[activeIndex];
+  useFocusSnippet("music", songs, focusedSong);
 
-  if (!favoriteSongs.length) {
+  if (!songs.length) {
     return <SelectableList options={[]} activeIndex={0} emptyMessage="Add tracks in src/data/favorite-songs.ts" />;
   }
 
   return (
     <div className={styles.musicView}>
       <div className={styles.coverBackdrop} aria-hidden="true">
-        {favoriteSongs.map((song) => (
+        {songs.map((song) => (
           <img
             key={song.id}
             className={styles.coverBackdropImage}
@@ -123,7 +128,7 @@ const MusicView = () => {
           />
         ))}
       </div>
-      <CoverFlow songs={favoriteSongs} activeIndex={activeIndex} />
+      <CoverFlow songs={songs} activeIndex={activeIndex} />
     </div>
   );
 };

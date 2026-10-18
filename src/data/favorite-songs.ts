@@ -27,14 +27,14 @@ export type FavoriteSong = {
 
 export const favoriteSongs: FavoriteSong[] = [
   {
-    id: "slow-dancing-in-a-burning-room",
-    title: "Slow Dancing in a Burning Room",
+    id: "stop-this-train",
+    title: "Stop This Train",
     artist: "John Mayer",
     album: "Continuum",
     coverArt:
       "https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/7a/a0/f4/7aa0f487-f983-390e-73ef-005115eea1e0/dj.oqpplyfm.jpg/600x600bb.jpg",
     previewUrl:
-      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/2a/ab/53/2aab53e6-ed87-1ce8-3b12-01c5a847aa42/mzaf_15151430342496758350.plus.aac.p.m4a",
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/58/a9/10/58a9104b-1e60-9b1f-888f-e2bb336e5a8f/mzaf_12466028291604393207.plus.aac.p.m4a",
   },
   {
     id: "shes-always-a-woman",
@@ -47,14 +47,14 @@ export const favoriteSongs: FavoriteSong[] = [
       "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/4c/0b/cc/4c0bccdb-4238-60d6-f957-a29183c4ca54/mzaf_13133189800023244548.plus.aac.p.m4a",
   },
   {
-    id: "better-late-than-never",
-    title: "Better Late Than Never",
+    id: "dardos",
+    title: "Dardos",
     artist: "Romeo Santos & Prince Royce",
     album: "Better Late Than Never",
     coverArt:
       "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/60/66/a9/6066a9a2-b1e8-d171-d8b3-7d044c040b94/196873751887.jpg/600x600bb.jpg",
     previewUrl:
-      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/f6/61/9a/f6619aa8-bfe3-5a4b-764c-05e3269e5c04/mzaf_17428150810413708931.plus.aac.p.m4a",
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/dd/72/96/dd72963a-c515-a551-b47e-583c99c6bfd0/mzaf_10273637570356807203.plus.aac.p.m4a",
   },
   {
     id: "maroon",
@@ -67,14 +67,14 @@ export const favoriteSongs: FavoriteSong[] = [
       "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/e8/20/ac/e820acec-e22f-7378-2e13-bbd2e651efd8/mzaf_8654939163166615443.plus.aac.p.m4a",
   },
   {
-    id: "mitsubishi",
-    title: "mitsubishi",
+    id: "vintage-vuitton",
+    title: "vintage vuitton",
     artist: "earfzilla",
-    album: "mitsubishi - Single",
+    album: "vintage vuitton - Single",
     coverArt:
-      "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/50/a7/34/50a7342d-83d6-401a-6b18-b8556669e129/199316679069_cover.jpg/600x600bb.jpg",
+      "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/65/08/01/650801d9-4015-199b-9bff-b22c41758801/199316780888_cover.jpg/600x600bb.jpg",
     previewUrl:
-      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/11/e9/29/11e92909-5d0e-3315-c34f-56eca047698f/mzaf_3560373124792734804.plus.aac.p.m4a",
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/93/1f/4d/931f4ddc-ea39-f2ef-9b65-0f04af2ac8d1/mzaf_17344213775783142212.plus.aac.p.m4a",
   },
   {
     id: "blame-it-on-the-sun",
@@ -117,13 +117,113 @@ export const favoriteSongs: FavoriteSong[] = [
       "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/40/a8/06/40a8061c-78fc-8835-fbd4-56a9b255f0be/mzaf_1916507818919347095.plus.aac.p.m4a",
   },
   {
-    id: "indecision",
-    title: "Indecision",
-    artist: "Rex Orange County & Daniel Caesar",
-    album: "Dream Fatigue",
+    id: "4-seasons",
+    title: "4 Seasons",
+    artist: "Rex Orange County",
+    album: "Apricot Princess",
     coverArt:
-      "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/c0/80/be/c080be0b-c579-4dba-27a1-8ac82768e1f2/885288429602.jpg/600x600bb.jpg",
+      "https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/2d/1e/73/2d1e7358-0dde-30fc-b5fe-d6ca7d975954/5060450063043_1.jpg/600x600bb.jpg",
     previewUrl:
-      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/a8/d5/a8/a8d5a89c-58da-b3c5-1c46-ac90d59efad7/mzaf_11970592240236397535.plus.aac.p.m4a",
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/9c/d3/06/9cd306ef-34c4-696b-8372-2bba5c513b59/mzaf_1070739444292157394.plus.aac.p.m4a",
+  },
+  {
+    id: "sunday-morning",
+    title: "Sunday Morning",
+    artist: "No Doubt",
+    album: "Tragic Kingdom",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/fe/0a/68/fe0a687a-537e-e902-0778-90465c118f77/00602547870575.rgb.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/90/aa/de/90aade2c-282f-f719-09b3-eef97cceacfe/mzaf_7055869600242462279.plus.aac.p.m4a",
+  },
+  {
+    id: "down-under",
+    title: "Down Under",
+    artist: "Men At Work",
+    album: "Business As Usual",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Features115/v4/80/07/23/80072391-3543-cdb9-e298-08d5f0595f41/dj.uyepaoyc.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/76/1c/6e/761c6e1d-1b95-e87f-bcec-41afc0836a9a/mzaf_11800999298773408397.plus.aac.p.m4a",
+  },
+  {
+    id: "come-back-to-earth",
+    title: "Come Back to Earth",
+    artist: "Mac Miller",
+    album: "Swimming",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/e3/38/b5/e338b529-da3f-b4b9-b8f9-1fae428e7a23/093624905899.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/04/bf/10/04bf10ed-0dae-fe63-94bc-eba16a7b8faa/mzaf_4512545557535985538.plus.aac.p.m4a",
+  },
+  {
+    id: "cant-smile-without-you",
+    title: "Can't Smile Without You",
+    artist: "Barry Manilow",
+    album: "Ultimate Manilow",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/4f/1e/49/4f1e498c-bfd1-9a74-bfb9-e4945e3ce851/mzi.nbijprbi.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/3b/9d/42/3b9d4296-9899-b8df-72aa-2b6be999ccfe/mzaf_17443934839668555103.plus.aac.p.m4a",
+  },
+  {
+    id: "a-dios-le-pido",
+    title: "A Dios Le Pido",
+    artist: "Juanes",
+    album: "Un Día Normal",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/74/77/93/7477934f-be02-1ac6-a909-8b67a9cd067b/22UMGIM50939.rgb.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/67/77/7c/67777c42-d99d-7700-022f-3809fde999bb/mzaf_1005235569969926363.plus.aac.p.m4a",
+  },
+  {
+    id: "bitch",
+    title: "Bitch",
+    artist: "Road to Bremen",
+    album: "Foreword - EP",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/fe/05/ef/fe05ef13-3982-b5a7-14bb-97b03c4f0df1/artwork.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/f6/0c/36/f60c3678-5c54-64dd-e9e3-fde65900e322/mzaf_11315200017619150810.plus.aac.p.m4a",
+  },
+  {
+    id: "last-night-on-earth",
+    title: "Last Night on Earth",
+    artist: "Green Day",
+    album: "21st Century Breakdown",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music/eb/d6/fc/mzi.ppkbuzdu.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/dd/7b/59/dd7b59e0-729a-3e3d-0a2e-ea169d19326d/mzaf_16747645017638451316.plus.aac.p.m4a",
+  },
+  {
+    id: "hey-there-delilah",
+    title: "Hey There Delilah",
+    artist: "Plain White T's",
+    album: "Every Second Counts",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/a8/a4/23/a8a423e8-643b-79d0-81e4-00b3ca683b8c/00050087104436.rgb.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/f6/82/42/f6824288-2d1e-7a1f-ed84-6b435cbfea74/mzaf_3615908399069987941.plus.aac.p.m4a",
+  },
+  {
+    id: "rest-up",
+    title: "Rest Up",
+    artist: "boy pablo",
+    album: "Rest Up - Single",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/a6/cc/21/a6cc2148-840d-b6eb-79ae-9776f26c4c76/192641534249_Cover.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/fc/5c/4c/fc5c4c00-3050-eefd-57a1-3339c4e910b1/mzaf_14378785864077706484.plus.aac.p.m4a",
+  },
+  {
+    id: "who-knows",
+    title: "Who Knows",
+    artist: "Daniel Caesar",
+    album: "Son Of Spergy",
+    coverArt:
+      "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/3b/c0/c5/3bc0c51d-33f2-ee19-e148-6d8f2c50df24/25UMGIM90843.rgb.jpg/600x600bb.jpg",
+    previewUrl:
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/f2/af/b0/f2afb01b-42c5-7803-be2f-b7365c9a928a/mzaf_17144887126595930673.plus.aac.p.m4a",
   },
 ];
