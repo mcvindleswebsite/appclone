@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, type CSSProperties, type MouseEvent } from "react";
 import { motion, type PanInfo } from "motion/react";
 
+import { unlockTickAudio, wheelTick } from "./click-feedback";
 import {
   dispatchIpodEvent,
   dispatchKeyboardEvent,
@@ -151,6 +152,7 @@ export const ClickWheel = () => {
     lastTickRef.current = now;
     lastDirectionRef.current = direction;
 
+    wheelTick();
     dispatchScrollEvent(direction, velocityRef.current);
   }, []);
 
@@ -179,7 +181,22 @@ export const ClickWheel = () => {
     [handleWheelPress]
   );
 
-  useWindowEvent<KeyboardEvent>("keydown", (event) => dispatchKeyboardEvent(event.key));
+  useWindowEvent<KeyboardEvent>("keydown", (event) => {
+    if (event.key.startsWith("Arrow")) wheelTick();
+    dispatchKeyboardEvent(event.key);
+  });
+
+  // The tick's AudioContext can only start from a gesture; pan moves don't
+  // count on iOS, so unlock on the press that begins each spin.
+  useEffect(() => {
+    const events = ["pointerdown", "keydown", "touchend"] as const;
+    events.forEach((name) => window.addEventListener(name, unlockTickAudio, { capture: true }));
+    return () => {
+      events.forEach((name) =>
+        window.removeEventListener(name, unlockTickAudio, { capture: true })
+      );
+    };
+  }, []);
 
   // touch-action: none (CSS) covers modern browsers; this non-passive guard
   // also stops older iOS Safari from scrolling the page mid-spin.

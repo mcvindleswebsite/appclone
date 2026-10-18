@@ -35,7 +35,6 @@ const getSkipCount = (event: Event) => {
 /** Keeps a wheel-driven index within the list's bounds. */
 export const useScrollIndex = (id: string, options: ListOption[]) => {
   const { isTopView, setPreview } = useViewContext();
-  const { triggerHaptics } = useSettings();
   const [index, setIndex] = useState(0);
   const isActive = isTopView(id);
   const clampedIndex = Math.min(index, Math.max(options.length - 1, 0));
@@ -56,15 +55,15 @@ export const useScrollIndex = (id: string, options: ListOption[]) => {
 
   const scroll = useCallback(
     (event: Event, direction: 1 | -1) => {
+      // Wheel steps already tick and buzz in ClickWheel.
       if (!isActive) return;
-      triggerHaptics();
       const skip = getSkipCount(event);
       setIndex((prev) => {
         const current = Math.min(prev, options.length - 1);
         return Math.min(Math.max(current + direction * skip, 0), options.length - 1);
       });
     },
-    [isActive, options.length, triggerHaptics]
+    [isActive, options.length]
   );
 
   useWindowEvent("forwardscroll", (event) => scroll(event, 1));

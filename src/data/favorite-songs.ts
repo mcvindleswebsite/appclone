@@ -57,14 +57,14 @@ export const favoriteSongs: FavoriteSong[] = [
       "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/dd/72/96/dd72963a-c515-a551-b47e-583c99c6bfd0/mzaf_10273637570356807203.plus.aac.p.m4a",
   },
   {
-    id: "maroon",
-    title: "Maroon",
-    artist: "Kevin Abstract & Dominic Fike",
-    album: "Blush",
+    id: "crumble",
+    title: "Crumble",
+    artist: "Kevin Abstract",
+    album: "ARIZONA BABY",
     coverArt:
-      "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/a4/d9/2f/a4d92f61-543b-70c1-0b8c-7a16d9345eaf/198704617607_Cover.jpg/600x600bb.jpg",
+      "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/6e/39/9c/6e399c4d-e288-ebe7-3ed8-89bb04408637/886447681329.jpg/600x600bb.jpg",
     previewUrl:
-      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/e8/20/ac/e820acec-e22f-7378-2e13-bbd2e651efd8/mzaf_8654939163166615443.plus.aac.p.m4a",
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/00/4f/50/004f5027-553d-72ec-1c6e-e07aece33312/mzaf_10336020062570550950.plus.aac.p.m4a",
   },
   {
     id: "vintage-vuitton",
@@ -77,14 +77,14 @@ export const favoriteSongs: FavoriteSong[] = [
       "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/93/1f/4d/931f4ddc-ea39-f2ef-9b65-0f04af2ac8d1/mzaf_17344213775783142212.plus.aac.p.m4a",
   },
   {
-    id: "blame-it-on-the-sun",
-    title: "Blame It on the Sun",
-    artist: "Stevie Wonder",
-    album: "Talking Book",
+    id: "im-gonna-be-500-miles",
+    title: "I'm Gonna Be (500 Miles)",
+    artist: "The Proclaimers",
+    album: "Sunshine On Leith",
     coverArt:
-      "https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/62/61/61/626161c0-f4d7-e6ff-8586-768340ef278f/00602537002382.rgb.jpg/600x600bb.jpg",
+      "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/13/96/50/139650ee-571d-a428-9ea4-ca6cf2d0bbbd/094638392057.jpg/600x600bb.jpg",
     previewUrl:
-      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/99/df/27/99df2788-bd41-eac4-e9e3-03aa43ea9cf4/mzaf_15041049974211889637.plus.aac.p.m4a",
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/af/68/bf/af68bfe9-c447-3d03-25dd-3edd5129c350/mzaf_3425295693121731744.plus.aac.p.m4a",
   },
   {
     id: "one-of-those-crazy-girls",
@@ -107,14 +107,14 @@ export const favoriteSongs: FavoriteSong[] = [
       "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/de/c7/73/dec77338-a3a6-c636-1fde-23b3a9333df6/mzaf_6991733807105899076.plus.aac.p.m4a",
   },
   {
-    id: "wake-up-call",
-    title: "Wake Up Call",
+    id: "this-love",
+    title: "This Love",
     artist: "Maroon 5",
-    album: "It Won't Be Soon Before Long",
+    album: "Songs About Jane",
     coverArt:
-      "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/d1/f6/02/d1f602c4-e185-4ce5-c361-23af7c857628/07UMGIM06094.rgb.jpg/600x600bb.jpg",
+      "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/d0/3e/25/d03e255d-e205-0e66-20f6-01e251896c25/14UMGIM27076.rgb.jpg/600x600bb.jpg",
     previewUrl:
-      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/40/a8/06/40a8061c-78fc-8835-fbd4-56a9b255f0be/mzaf_1916507818919347095.plus.aac.p.m4a",
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/0c/e3/2a/0ce32a1c-0dfb-e52d-b911-0b9bb686fefd/mzaf_5158935944278741266.plus.aac.p.m4a",
   },
   {
     id: "4-seasons",
@@ -137,14 +137,14 @@ export const favoriteSongs: FavoriteSong[] = [
       "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/90/aa/de/90aade2c-282f-f719-09b3-eef97cceacfe/mzaf_7055869600242462279.plus.aac.p.m4a",
   },
   {
-    id: "down-under",
-    title: "Down Under",
-    artist: "Men At Work",
-    album: "Business As Usual",
+    id: "crush",
+    title: "Crush",
+    artist: "fakemink & ok",
+    album: "Crush - Single",
     coverArt:
-      "https://is1-ssl.mzstatic.com/image/thumb/Features115/v4/80/07/23/80072391-3543-cdb9-e298-08d5f0595f41/dj.uyepaoyc.jpg/600x600bb.jpg",
+      "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/ac/98/7c/ac987ca3-6755-8aa5-ae70-874dd11f0aa8/199094415460.png/600x600bb.jpg",
     previewUrl:
-      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/76/1c/6e/761c6e1d-1b95-e87f-bcec-41afc0836a9a/mzaf_11800999298773408397.plus.aac.p.m4a",
+      "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/01/07/7c/01077c5a-2fed-844c-02cf-d4bcb398c107/mzaf_5124560351334433916.plus.aac.p.m4a",
   },
   {
     id: "come-back-to-earth",

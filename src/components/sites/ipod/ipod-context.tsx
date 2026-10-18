@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { pulseHaptic } from "./click-feedback";
 import { getSystemDeviceTheme, type DeviceThemeName } from "./themes";
 import type { PreviewId, ViewId, ViewInstance } from "./types";
 import { VIEW_CONFIG } from "./view-config";
@@ -25,11 +26,8 @@ type SettingsContextValue = {
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
-const triggerHaptics = () => {
-  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-    navigator.vibrate(10);
-  }
-};
+/** Button presses; wheel steps get their own tick + haptic in ClickWheel. */
+const triggerHaptics = () => pulseHaptic();
 
 /* ------------------------------------------------------------------ */
 /* Views                                                               */
