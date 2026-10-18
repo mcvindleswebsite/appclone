@@ -5,7 +5,6 @@ import { profile } from "@/data/profile";
 import { AudioProvider } from "./audio-context";
 import { ClickWheel } from "./ClickWheel";
 import { IpodProvider, useSettings } from "./ipod-context";
-import { ShowcaseDevice, useShowcase } from "./showcase";
 import { DEVICE_THEMES, getSystemDeviceTheme } from "./themes";
 import { useSystemDarkMode } from "./use-system-dark-mode";
 import { ViewManager } from "./ViewManager";
@@ -19,7 +18,7 @@ const Shell = () => {
       <div className={styles.screen}>
         <ViewManager />
       </div>
-      <div className={styles.wheelContainer} data-showcase-ignore>
+      <div className={styles.wheelContainer}>
         <ClickWheel />
       </div>
     </div>
@@ -32,14 +31,12 @@ const Shell = () => {
  */
 export const Ipod = () => {
   const prefersDark = useSystemDarkMode();
-  const showcase = useShowcase();
 
   return (
     <main
       className={styles.page}
       // Same value the shell renders with, so page and device always match.
       data-device-theme={prefersDark === null ? undefined : getSystemDeviceTheme(prefersDark)}
-      data-showcase={showcase.isBackdropDark}
     >
       <h1 className={styles.srOnly}>
         {profile.name} (@{profile.handle})
@@ -58,9 +55,7 @@ export const Ipod = () => {
       {prefersDark !== null && (
         <IpodProvider prefersDark={prefersDark}>
           <AudioProvider>
-            <ShowcaseDevice isSpinning={showcase.isSpinning} onShowcase={showcase.start}>
-              <Shell />
-            </ShowcaseDevice>
+            <Shell />
           </AudioProvider>
         </IpodProvider>
       )}
