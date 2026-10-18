@@ -30,7 +30,7 @@ const linkOptions: ListOption[] = profile.links.map((link, index) => ({
   preview: `link-${index}`,
 }));
 
-/** Root menu: Music, Instagram, TikTok, Games (+ Now Playing while a song plays). */
+/** Root menu: Music, Instagram, TikTok, Games, About (+ Now Playing while a song plays). */
 const HomeView = () => {
   const { nowPlayingItem } = useAudioPlayer();
   const options = useMemo<ListOption[]>(
@@ -38,6 +38,7 @@ const HomeView = () => {
       { type: "view", label: "Music", viewId: "music", preview: "music" },
       ...linkOptions,
       { type: "view", label: "Games", viewId: "games", preview: "games" },
+      { type: "view", label: "About", viewId: "about" },
       ...(nowPlayingItem
         ? [
             {
@@ -139,6 +140,22 @@ const NowPlayingView = () => {
   return <NowPlaying />;
 };
 
+const aboutOptions: ListOption[] = [
+  { type: "link", label: "Email", sublabel: "vincent@mcvindle.com", url: "mailto:vincent@mcvindle.com" },
+  { type: "link", label: "Phone", sublabel: "(909) 771-9891", url: "tel:9097719891" },
+];
+
+/** System info: tappable contact lines with the version pinned to the bottom. */
+const AboutView = () => {
+  const activeIndex = useSelectableList("about", aboutOptions);
+  return (
+    <div className={styles.aboutView}>
+      <SelectableList options={aboutOptions} activeIndex={activeIndex} />
+      <p className={styles.aboutVersion}>Version 1.0.0</p>
+    </div>
+  );
+};
+
 export const VIEW_COMPONENTS: Record<ViewId, ComponentType> = {
   home: HomeView,
   music: MusicView,
@@ -146,4 +163,5 @@ export const VIEW_COMPONENTS: Record<ViewId, ComponentType> = {
   nowPlaying: NowPlayingView,
   brickGame: BrickGameView,
   solitaireGame: SolitaireGameView,
+  about: AboutView,
 };

@@ -184,14 +184,16 @@ export const SelectableList = ({
         );
 
         // Real anchors keep outbound links crawlable and assistive-tech friendly.
+        // mailto:/tel: stay in the same tab so they hand off to the native app.
+        const isWebLink = option.type === "link" && /^https?:/.test(option.url);
         return option.type === "link" ? (
           <a
             key={`${option.label}-${index}`}
             className={styles.listItem}
             data-active={isActive}
             href={option.url}
-            target="_blank"
-            rel="noopener noreferrer"
+            target={isWebLink ? "_blank" : undefined}
+            rel={isWebLink ? "noopener noreferrer" : undefined}
             tabIndex={-1}
           >
             {content}

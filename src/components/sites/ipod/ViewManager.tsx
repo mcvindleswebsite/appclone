@@ -98,7 +98,8 @@ export const ViewManager = () => {
         <Header />
         <ViewStack views={fullViews} />
       </div>
-      <div className={styles.mask} />
+      {/* The About screen's contact links must stay tappable. */}
+      <div className={styles.mask} data-passthrough={topView.id === "about"} />
     </div>
   );
 };

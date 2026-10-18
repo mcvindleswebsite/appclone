@@ -201,6 +201,10 @@
   inset: 0;
 }
 
+.mask[data-passthrough="true"] {
+  pointer-events: none;
+}
+
 .splitContainer {
   z-index: 2;
   position: absolute;
@@ -1022,4 +1026,20 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ---------- About ---------- */
+
+.aboutView {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.aboutVersion {
+  margin: auto 0 0;
+  padding: 0.5rem;
+  text-align: center;
+  font-size: 11px;
+  color: rgb(140, 140, 140);
 }

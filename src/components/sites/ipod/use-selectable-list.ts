@@ -93,7 +93,12 @@ export const useOptionSelect = (
         showView(option.viewId);
         break;
       case "link":
-        window.open(option.url, "_blank", "noopener,noreferrer");
+        if (/^https?:/.test(option.url)) {
+          window.open(option.url, "_blank", "noopener,noreferrer");
+        } else {
+          // mailto:/tel: open the native mail app or dialer.
+          window.location.href = option.url;
+        }
         break;
       case "song": {
         const song = option.queue[option.startIndex];
