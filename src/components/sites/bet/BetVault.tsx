@@ -13,9 +13,9 @@ import { T } from "./theme";
 const FILTERS = ["ALL", "PENDING", "WIN", "LOSS"] as const;
 
 const OUTCOME_STYLES: Record<Outcome, string> = {
-  WIN: "bg-[#00D26A] text-[#0A0D14]",
+  WIN: "bg-[#00DD94] text-[#050D0A]",
   LOSS: "bg-[#FF3B30] text-white",
-  PENDING: "bg-[#2A3446] text-white",
+  PENDING: "bg-[#1E2638] text-white",
 };
 
 const verdictColor = (verdict: string) =>
@@ -46,7 +46,7 @@ export function BetVault({
         ].map((stat) => (
           <div key={stat.label} className={cn(T.card, "p-4")}>
             <p className={T.label}>{stat.label}</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{stat.value}</p>
+            <p className="font-kalshi-condensed mt-1 text-3xl tabular-nums">{stat.value}</p>
           </div>
         ))}
       </div>
@@ -55,14 +55,14 @@ export function BetVault({
         <div className={cn(T.card, "flex flex-wrap gap-2 p-4")}>
           <span className={cn(T.label, "mr-2 self-center")}>Memory</span>
           {insights.sports.map((s) => (
-            <span key={s.sport} className="rounded-full bg-[#1E2635] px-3 py-1 text-xs">
+            <span key={s.sport} className="rounded-full bg-[#1E2638] px-3 py-1 text-xs">
               {s.sport} <span className={T.muted}>· {s.count} picks · {s.wins}-{s.losses}</span>
             </span>
           ))}
           {insights.byRisk
             .filter((r) => r.wins + r.losses > 0)
             .map((r) => (
-              <span key={r.risk} className="rounded-full bg-[#1E2635] px-3 py-1 text-xs">
+              <span key={r.risk} className="rounded-full bg-[#1E2638] px-3 py-1 text-xs">
                 Risk {r.risk} <span className={T.muted}>· {r.wins}-{r.losses}</span>
               </span>
             ))}
@@ -77,7 +77,7 @@ export function BetVault({
             onClick={() => setFilter(f)}
             className={cn(
               "rounded-full px-4 py-1.5 text-xs font-semibold transition-colors",
-              filter === f ? "bg-white text-[#0A0D14]" : "text-[#8A94A6] hover:text-white"
+              filter === f ? "bg-white text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
             )}
           >
             {f === "ALL" ? "All" : f[0] + f.slice(1).toLowerCase()}
@@ -95,25 +95,25 @@ export function BetVault({
             <li key={r.id} className={cn(T.card, "flex flex-col gap-3 p-4 md:flex-row md:items-start")}>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="rounded bg-[#1E2635] px-2 py-0.5 font-semibold">{r.slip.sport}</span>
+                  <span className="rounded bg-[#1E2638] px-2 py-0.5 font-semibold">{r.slip.sport}</span>
                   <span className={T.muted}>
                     {new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                   </span>
                   <span className={T.muted}>
                     · Risk {r.risk} {RISK_PROFILES[r.risk].label}
                   </span>
-                  {r.ai && <span className="rounded bg-[#00D26A]/10 px-1.5 py-0.5 text-[#00D26A]">AI</span>}
+                  {r.ai && <span className="rounded bg-[#014737] px-1.5 py-0.5 text-[#00DD94]">AI</span>}
                 </div>
-                <p className="mt-1.5 truncate font-semibold">{r.slip.matchup || r.slip.marketTitle}</p>
+                <p className="font-kalshi-bold mt-1.5 truncate">{r.slip.matchup || r.slip.marketTitle}</p>
                 <p className={cn("truncate text-xs", T.muted)}>
                   {r.slip.marketTitle} · YES {r.slip.pick} @ {r.slip.yesPrice}¢
                 </p>
-                <p className="mt-2 text-xs leading-relaxed text-[#C5CCD8]">{r.summary}</p>
+                <p className="mt-2 text-xs leading-relaxed text-[#F5F7F4]/85">{r.summary}</p>
               </div>
 
               <div className="flex shrink-0 flex-row items-center justify-between gap-3 md:flex-col md:items-end">
                 <div className="text-right">
-                  <p className={cn("text-sm font-bold", verdictColor(r.verdict))}>{r.verdict}</p>
+                  <p className={cn("font-kalshi-bold text-sm", verdictColor(r.verdict))}>{r.verdict}</p>
                   <p className={cn("text-[11px] tabular-nums", T.muted)}>
                     {Math.round(r.probability * 100)}% · {r.edge >= 0 ? "+" : ""}
                     {(r.edge * 100).toFixed(1)} pts
@@ -127,7 +127,7 @@ export function BetVault({
                       onClick={() => onOutcome(r.id, o)}
                       className={cn(
                         "rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors",
-                        r.outcome === o ? OUTCOME_STYLES[o] : "bg-[#0E131D] text-[#4A5468] hover:text-white"
+                        r.outcome === o ? OUTCOME_STYLES[o] : "bg-[#050D0A] text-[#F5F7F4]/35 hover:text-white"
                       )}
                     >
                       {o}
@@ -137,7 +137,7 @@ export function BetVault({
                     type="button"
                     aria-label="Delete pick"
                     onClick={() => onDelete(r.id)}
-                    className="ml-1 rounded-md p-1.5 text-[#4A5468] hover:bg-[#FF3B30]/10 hover:text-[#FF3B30]"
+                    className="ml-1 rounded-md p-1.5 text-[#F5F7F4]/35 hover:bg-[#FF3B30]/10 hover:text-[#FF3B30]"
                   >
                     <Trash2 className="size-3.5" />
                   </button>

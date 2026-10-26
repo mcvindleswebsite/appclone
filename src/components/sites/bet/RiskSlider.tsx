@@ -8,12 +8,12 @@ import { T } from "./theme";
 
 const LEVELS: RiskLevel[] = [1, 2, 3, 4, 5];
 
-/** Shades from Kalshi green (safety) to red (variance). */
+/** Brand-kit colors only: darkmode green (safety) through light gray to red (variance). */
 const TICK_COLORS: Record<RiskLevel, string> = {
-  1: "#00D26A",
-  2: "#7BD84A",
-  3: "#F5C542",
-  4: "#FF8A3D",
+  1: "#00DD94",
+  2: "#00DD94",
+  3: "#F5F7F4",
+  4: "#FF3B30",
   5: "#FF3B30",
 };
 
@@ -25,16 +25,16 @@ export function RiskSlider({ value, onChange }: { value: RiskLevel; onChange: (r
     <div className="flex flex-col gap-3">
       <div className="flex items-baseline justify-between">
         <span className={T.label}>Risk Tolerance</span>
-        <span className="text-sm font-semibold" style={{ color: TICK_COLORS[value] }}>
+        <span className="font-kalshi-bold text-sm" style={{ color: TICK_COLORS[value] }}>
           {value} · {profile.label}
         </span>
       </div>
 
       <div className="relative px-2 pt-2 pb-7">
-        <div className="relative h-1.5 rounded-full bg-[#1E2635]">
+        <div className="relative h-1.5 rounded-full bg-[#1E2638]">
           <div
             className="absolute inset-y-0 left-0 rounded-full transition-all"
-            style={{ width: `${pct}%`, background: `linear-gradient(90deg, #00D26A, ${TICK_COLORS[value]})` }}
+            style={{ width: `${pct}%`, background: `linear-gradient(90deg, #00DD94, ${TICK_COLORS[value]})` }}
           />
           {LEVELS.map((level) => {
             const left = ((level - 1) / 4) * 100;
@@ -52,14 +52,14 @@ export function RiskSlider({ value, onChange }: { value: RiskLevel; onChange: (r
                 <span
                   className={cn(
                     "block rounded-full border-2 transition-all",
-                    active ? "size-5 border-white" : "size-3 border-[#0A0D14] hover:scale-125"
+                    active ? "size-5 border-white" : "size-3 border-[#050D0A] hover:scale-125"
                   )}
-                  style={{ background: level <= value ? TICK_COLORS[level] : "#2A3446" }}
+                  style={{ background: level <= value ? TICK_COLORS[level] : "#1E2638" }}
                 />
                 <span
                   className={cn(
                     "absolute top-8 left-1/2 -translate-x-1/2 text-[11px] font-semibold tabular-nums",
-                    active ? "text-white" : "text-[#4A5468]"
+                    active ? "text-white" : "text-[#F5F7F4]/35"
                   )}
                 >
                   {level}

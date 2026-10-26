@@ -64,3 +64,26 @@ export interface HistoryInsights {
   teams: { team: string; count: number; wins: number; losses: number }[];
   byRisk: { risk: RiskLevel; wins: number; losses: number }[];
 }
+
+export interface KalshiMarketOption {
+  ticker: string;
+  title: string;
+  /** What the YES side is on, e.g. "Philadelphia". */
+  pick: string;
+  /** Prices in cents; null when there's no quote. */
+  yesAsk: number | null;
+  yesBid: number | null;
+  lastPrice: number | null;
+  active: boolean;
+}
+
+/** A Kalshi event resolved from a pasted link. */
+export interface KalshiImport {
+  eventTicker: string;
+  title: string;
+  subtitle: string;
+  competition: string;
+  markets: KalshiMarketOption[];
+  /** Market ticker the link pointed at, when it named one. */
+  selected: string | null;
+}

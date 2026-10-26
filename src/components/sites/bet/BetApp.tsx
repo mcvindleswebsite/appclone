@@ -21,7 +21,10 @@ import { SPORTS } from "@/lib/bet/parse-slip";
 import { cn } from "@/lib/utils";
 import type { AiSynthesis, BetRecord, BetSlip, ContextFactors, InjuryImpact, Outcome, RiskLevel } from "@/types/bet";
 
+import { BrandLogo } from "@/app/bet/components/BrandLogo";
+
 import { BetVault } from "./BetVault";
+import { KalshiLinkImport } from "./KalshiLinkImport";
 import { RiskSlider } from "./RiskSlider";
 import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
@@ -99,11 +102,11 @@ function Stepper({
   return (
     <div className="flex flex-col gap-1.5">
       <span className={T.label}>{label}</span>
-      <div className="flex items-center justify-between rounded-lg border border-[#1E2635] bg-[#0E131D]">
+      <div className="flex items-center justify-between rounded-lg border border-[#1E2638] bg-[#050D0A]">
         <button
           type="button"
           onClick={() => onChange(Math.max(min, value - 1))}
-          className="px-3 py-2 text-[#8A94A6] hover:text-white"
+          className="px-3 py-2 text-[#F5F7F4]/60 hover:text-white"
         >
           −
         </button>
@@ -111,7 +114,7 @@ function Stepper({
         <button
           type="button"
           onClick={() => onChange(Math.min(max, value + 1))}
-          className="px-3 py-2 text-[#8A94A6] hover:text-white"
+          className="px-3 py-2 text-[#F5F7F4]/60 hover:text-white"
         >
           +
         </button>
@@ -204,6 +207,15 @@ export function BetApp() {
     setNotice(found ? `Read ${found} field${found > 1 ? "s" : ""} from the screenshot — verify below.` : "No slip fields found — enter them manually.");
   }, []);
 
+  const onImport = useCallback((fields: Partial<BetSlip>, label: string) => {
+    setSlip((prev) => ({ ...prev, ...fields }));
+    setOddsText("");
+    setOcrText(null);
+    setAi(null);
+    setActiveId(null);
+    setNotice(`Imported ${label} from Kalshi — verify below.`);
+  }, []);
+
   const setFactor = <K extends keyof ContextFactors>(key: K, value: ContextFactors[K]) =>
     setFactors((prev) => ({ ...prev, [key]: value }));
 
@@ -279,14 +291,9 @@ export function BetApp() {
 
   return (
     <div className={cn("fixed inset-0 overflow-y-auto text-white antialiased", T.bg)}>
-      <header className="sticky top-0 z-10 border-b border-[#1E2635] bg-[#0A0D14]/90 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-[#1E2638] bg-[#050D0A]/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-[#00D26A] text-sm font-black text-[#0A0D14]">
-              B
-            </span>
-            <span className="font-semibold tracking-tight">Bet Lab</span>
-          </div>
+          <BrandLogo className="text-lg" />
           <nav className="flex gap-1 rounded-full bg-[#121824] p-1">
             {(
               [
@@ -300,7 +307,7 @@ export function BetApp() {
                 onClick={() => setTab(id)}
                 className={cn(
                   "rounded-full px-4 py-1.5 text-sm font-semibold transition-colors",
-                  tab === id ? "bg-white text-[#0A0D14]" : "text-[#8A94A6] hover:text-white"
+                  tab === id ? "bg-white text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
                 )}
               >
                 {label}
@@ -312,7 +319,7 @@ export function BetApp() {
               title={typeof sync === "object" ? sync.error : undefined}
               className={cn("hidden items-center gap-1.5 text-xs sm:flex", typeof sync === "object" ? T.no : T.muted)}
             >
-              {sync === "synced" ? <Cloud className="size-3.5 text-[#00D26A]" /> : <CloudOff className="size-3.5" />}
+              {sync === "synced" ? <Cloud className="size-3.5 text-[#00DD94]" /> : <CloudOff className="size-3.5" />}
               {sync === "synced" ? "Synced" : typeof sync === "object" ? `Sync error: ${sync.error}` : "Local only"}
             </span>
             <button
@@ -321,7 +328,7 @@ export function BetApp() {
               onClick={() => setShowKey((s) => !s)}
               className={cn(
                 "rounded-lg p-2 transition-colors hover:bg-[#121824]",
-                accessKey ? "text-[#00D26A]" : "text-[#8A94A6]"
+                accessKey ? "text-[#00DD94]" : "text-[#F5F7F4]/60"
               )}
             >
               <KeyRound className="size-4" />
@@ -358,9 +365,15 @@ export function BetApp() {
             {/* Slip input */}
             <section className="flex flex-col gap-5">
               <div className={cn(T.card, "flex flex-col gap-4 p-5")}>
-                <h2 className="text-lg font-semibold">Bet Slip</h2>
+                <h2 className="font-kalshi-bold text-lg">Bet Slip</h2>
+                <KalshiLinkImport onImport={onImport} />
+                <div className={cn("flex items-center gap-3 text-[11px] uppercase", T.muted)}>
+                  <span className="h-px flex-1 bg-[#1E2638]" />
+                  or scan a screenshot
+                  <span className="h-px flex-1 bg-[#1E2638]" />
+                </div>
                 <SlipReader onParsed={onParsed} />
-                {notice && <p className="text-xs text-[#F5C542]">{notice}</p>}
+                {notice && <p className="text-xs text-[#F5F7F4]">{notice}</p>}
 
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Sport">
@@ -441,7 +454,7 @@ export function BetApp() {
 
               <div className={cn(T.card, "flex flex-col gap-4 p-5")}>
                 <div className="flex items-baseline justify-between">
-                  <h2 className="text-lg font-semibold">Context</h2>
+                  <h2 className="font-kalshi-bold text-lg">Context</h2>
                   <span className={cn("text-xs", T.muted)}>{ai ? "Filled by AI research" : "Your estimates"}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -470,7 +483,7 @@ export function BetApp() {
                 type="button"
                 disabled={!slipReady || running}
                 onClick={() => void runEvaluation()}
-                className="flex items-center justify-center gap-2 rounded-xl bg-[#00D26A] py-3.5 text-sm font-bold text-[#0A0D14] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex items-center justify-center gap-2 rounded-xl bg-[#00DD94] py-3.5 text-sm font-bold text-[#050D0A] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {running ? (
                   <>
@@ -495,7 +508,7 @@ export function BetApp() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className={T.label}>Verdict · Risk {risk} {RISK_PROFILES[risk].label}</p>
-                    <p className={cn("mt-1 text-4xl font-bold tracking-tight", verdictTone)}>{evaluation.verdict}</p>
+                    <p className={cn("font-kalshi-condensed mt-1 text-5xl", verdictTone)}>{evaluation.verdict}</p>
                     {evaluation.side && (
                       <p className={cn("text-sm", T.muted)}>
                         {evaluation.side === "YES" ? slip.pick || "YES" : `Against ${slip.pick || "YES"}`} @{" "}
@@ -507,7 +520,7 @@ export function BetApp() {
                   <span
                     className={cn(
                       "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                      ai ? "bg-[#00D26A]/10 text-[#00D26A]" : "bg-[#1E2635] text-[#8A94A6]"
+                      ai ? "bg-[#014737] text-[#00DD94]" : "bg-[#1E2638] text-[#F5F7F4]/60"
                     )}
                   >
                     {ai ? <Brain className="size-3" /> : <Calculator className="size-3" />}
@@ -522,7 +535,7 @@ export function BetApp() {
                     <span className="font-semibold">Model {pct(evaluation.probability)}</span>
                   </div>
                   <div className="relative h-2.5 overflow-hidden rounded-full bg-[#FF3B30]/25">
-                    <div className="absolute inset-y-0 left-0 bg-[#00D26A]" style={{ width: pct(evaluation.probability) }} />
+                    <div className="absolute inset-y-0 left-0 bg-[#00DD94]" style={{ width: pct(evaluation.probability) }} />
                     <div className="absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(marketProb) }} />
                   </div>
                   <div className="flex justify-between text-[11px]">
@@ -541,7 +554,7 @@ export function BetApp() {
                         className={cn(
                           T.inset,
                           "p-3",
-                          evaluation.side === side && (side === "YES" ? "border-[#00D26A]/60" : "border-[#FF3B30]/60")
+                          evaluation.side === side && (side === "YES" ? "border-[#00DD94]/60" : "border-[#FF3B30]/60")
                         )}
                       >
                         <div className="flex items-baseline justify-between">
@@ -565,7 +578,7 @@ export function BetApp() {
                   {evaluation.reasons.map((reason) => (
                     <li key={reason} className="flex gap-2">
                       <span className={evaluation.side ? T.yes : T.no}>{evaluation.side ? "✓" : "✕"}</span>
-                      <span className="text-[#C5CCD8]">{reason}</span>
+                      <span className="text-[#F5F7F4]/85">{reason}</span>
                     </li>
                   ))}
                 </ul>
@@ -573,7 +586,7 @@ export function BetApp() {
                 {ai && (
                   <div className={cn(T.inset, "flex flex-col gap-2 p-4 text-sm")}>
                     <p className={T.label}>AI Synthesis</p>
-                    <p className="leading-relaxed text-[#C5CCD8]">{ai.summary}</p>
+                    <p className="leading-relaxed text-[#F5F7F4]/85">{ai.summary}</p>
                     {ai.risks.length > 0 && (
                       <ul className="mt-1 flex flex-col gap-1 text-xs">
                         {ai.risks.map((r) => (
@@ -587,10 +600,10 @@ export function BetApp() {
                 )}
 
                 {notes.length > 0 && (
-                  <div className="flex flex-col gap-1 border-t border-[#1E2635] pt-4 text-xs">
+                  <div className="flex flex-col gap-1 border-t border-[#1E2638] pt-4 text-xs">
                     <p className={T.label}>From Your Vault</p>
                     {notes.map((n) => (
-                      <p key={n} className="text-[#C5CCD8]">
+                      <p key={n} className="text-[#F5F7F4]/85">
                         {n}
                       </p>
                     ))}

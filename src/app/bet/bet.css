@@ -1,0 +1,72 @@
+/*
+ * Kalshi Sans, served from public/fonts/ when present. If the files are missing the
+ * browser skips these faces and falls through to Inter (loaded in layout.tsx), so the
+ * page never breaks. next/font/local can't do this: it fails the build on a missing file.
+ */
+@font-face {
+  font-family: "Kalshi Sans";
+  src:
+    url("/fonts/KalshiSans-Bold.woff2") format("woff2"),
+    url("/fonts/KalshiSans-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Kalshi Sans";
+  src:
+    url("/fonts/KalshiSans-Light.woff2") format("woff2"),
+    url("/fonts/KalshiSans-Light.otf") format("opentype");
+  font-weight: 300;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Kalshi Sans Condensed";
+  src:
+    url("/fonts/KalshiSans-Condensed.woff2") format("woff2"),
+    url("/fonts/KalshiSans-Condensed.otf") format("opentype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+.bet-fonts {
+  --font-kalshi-bold: "Kalshi Sans", var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-kalshi-light: "Kalshi Sans", var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-kalshi-condensed: "Kalshi Sans Condensed", var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-kalshi-light);
+  font-weight: 400;
+}
+
+.font-kalshi-bold {
+  font-family: var(--font-kalshi-bold);
+  font-weight: 700;
+}
+
+.font-kalshi-light {
+  font-family: var(--font-kalshi-light);
+  font-weight: 300;
+}
+
+/* Inter has no condensed cut, so the fallback tightens tracking instead. */
+.font-kalshi-condensed {
+  font-family: var(--font-kalshi-condensed);
+  font-weight: 700;
+  font-stretch: condensed;
+  letter-spacing: -0.02em;
+}
+
+@keyframes bet-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-120%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bet-toast-in {
+  animation: bet-toast-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
