@@ -28,11 +28,24 @@ export const mergeRecords = (a: BetRecord[], b: BetRecord[]) => {
 
 const headers = (key: string) => ({ "Content-Type": "application/json", "x-bet-key": key });
 
-export type SyncStatus = "local" | "synced" | "error";
+/** "local" (no key), "synced", or a human-readable reason the sync failed. */
+export type SyncStatus = "local" | "synced" | { error: string };
 
-export const fetchRemote = async (key: string): Promise<BetRecord[] | null> => {
+/** Turns an API failure into something that says what to fix. */
+const failure = async (response: Response) => {
+  const { error } = (await response.json().catch(() => ({}))) as { error?: string };
+  if (response.status === 401) return new Error("Wrong passphrase");
+  if (error === "Not configured") return new Error("BET_ACCESS_KEY not set on the server");
+  if (error === "Store not configured") return new Error("Storage not connected on the server");
+  return new Error(error ?? `Server error ${response.status}`);
+};
+
+export const syncErrorMessage = (error: unknown) =>
+  error instanceof Error && error.message !== "Failed to fetch" ? error.message : "Can't reach the server";
+
+export const fetchRemote = async (key: string): Promise<BetRecord[]> => {
   const response = await fetch("/api/bet/history", { headers: headers(key), cache: "no-store" });
-  if (!response.ok) return null;
+  if (!response.ok) throw await failure(response);
   const { records } = (await response.json()) as { records: BetRecord[] };
   return records;
 };
@@ -43,7 +56,7 @@ export const pushRemote = async (key: string, records: BetRecord[]) => {
     headers: headers(key),
     body: JSON.stringify({ records }),
   });
-  return response.ok;
+  if (!response.ok) throw await failure(response);
 };
 
 export const deleteRemote = async (key: string, id: string) => {

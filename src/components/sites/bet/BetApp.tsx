@@ -14,6 +14,7 @@ import {
   mergeRecords,
   pushRemote,
   saveLocal,
+  syncErrorMessage,
   type SyncStatus,
 } from "@/lib/bet/history";
 import { SPORTS } from "@/lib/bet/parse-slip";
@@ -149,8 +150,8 @@ export function BetApp() {
       saveLocal(next);
       if (accessKey && changed.length) {
         pushRemote(accessKey, changed)
-          .then((ok) => setSync(ok ? "synced" : "error"))
-          .catch(() => setSync("error"));
+          .then(() => setSync("synced"))
+          .catch((error: unknown) => setSync({ error: syncErrorMessage(error) }));
       }
     },
     [accessKey]
@@ -159,16 +160,16 @@ export function BetApp() {
   const syncRemote = useCallback(async (key: string) => {
     try {
       const remote = await fetchRemote(key);
-      if (!remote) return setSync("error");
       const merged = mergeRecords(recordsRef.current, remote);
       recordsRef.current = merged;
       setRecords(merged);
       saveLocal(merged);
       const remoteIds = new Map(remote.map((r) => [r.id, r.updatedAt]));
       const missing = merged.filter((r) => (remoteIds.get(r.id) ?? -1) < r.updatedAt);
-      setSync(missing.length === 0 || (await pushRemote(key, missing)) ? "synced" : "error");
-    } catch {
-      setSync("error");
+      if (missing.length) await pushRemote(key, missing);
+      setSync("synced");
+    } catch (error) {
+      setSync({ error: syncErrorMessage(error) });
     }
   }, []);
 
@@ -307,9 +308,12 @@ export function BetApp() {
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <span className={cn("hidden items-center gap-1.5 text-xs sm:flex", sync === "error" ? T.no : T.muted)}>
+            <span
+              title={typeof sync === "object" ? sync.error : undefined}
+              className={cn("hidden items-center gap-1.5 text-xs sm:flex", typeof sync === "object" ? T.no : T.muted)}
+            >
               {sync === "synced" ? <Cloud className="size-3.5 text-[#00D26A]" /> : <CloudOff className="size-3.5" />}
-              {sync === "synced" ? "Synced" : sync === "error" ? "Sync error" : "Local only"}
+              {sync === "synced" ? "Synced" : typeof sync === "object" ? `Sync error: ${sync.error}` : "Local only"}
             </span>
             <button
               type="button"
@@ -339,7 +343,9 @@ export function BetApp() {
               onBlur={(e) => saveKey(e.currentTarget.value.trim())}
               className={cn(T.input, "max-w-md")}
             />
-            <span className={cn("text-xs", T.muted)}>Stored in this browser only.</span>
+            <span className={cn("text-xs", typeof sync === "object" ? T.no : T.muted)}>
+              {typeof sync === "object" ? `Sync error: ${sync.error}` : "Stored in this browser only."}
+            </span>
           </div>
         )}
       </header>

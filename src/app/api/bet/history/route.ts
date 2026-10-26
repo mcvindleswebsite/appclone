@@ -25,6 +25,16 @@ const redis = async (command: (string | number)[]) => {
 
 const notConfigured = () => Response.json({ error: "Store not configured" }, { status: 503 });
 
+/** Runs a store command, mapping a missing or failing store to a JSON error response. */
+const run = async (command: (string | number)[]) => {
+  try {
+    const reply = await redis(command);
+    return reply ?? notConfigured();
+  } catch {
+    return Response.json({ error: "Storage error — check the Upstash connection" }, { status: 502 });
+  }
+};
+
 const isRecord = (value: unknown): value is BetRecord => {
   if (!value || typeof value !== "object") return false;
   const r = value as Partial<BetRecord>;
@@ -34,8 +44,8 @@ const isRecord = (value: unknown): value is BetRecord => {
 export async function GET(request: Request) {
   const denied = checkAccess(request);
   if (denied) return denied;
-  const reply = await redis(["HGETALL", KEY]);
-  if (!reply) return notConfigured();
+  const reply = await run(["HGETALL", KEY]);
+  if (reply instanceof Response) return reply;
 
   // HGETALL comes back flat: [id, json, id, json, ...].
   const flat = (reply.result as string[] | null) ?? [];
@@ -63,8 +73,8 @@ export async function POST(request: Request) {
   });
   if (fields.length === 0) return Response.json({ saved: 0 });
 
-  const reply = await redis(["HSET", KEY, ...fields]);
-  if (!reply) return notConfigured();
+  const reply = await run(["HSET", KEY, ...fields]);
+  if (reply instanceof Response) return reply;
   return Response.json({ saved: fields.length / 2 });
 }
 
@@ -73,7 +83,7 @@ export async function DELETE(request: Request) {
   if (denied) return denied;
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
-  const reply = await redis(["HDEL", KEY, id]);
-  if (!reply) return notConfigured();
+  const reply = await run(["HDEL", KEY, id]);
+  if (reply instanceof Response) return reply;
   return Response.json({ deleted: reply.result });
 }
