@@ -322,3 +322,22 @@ export const evaluateParlay = (slip: BetSlip, risk: RiskLevel, ai: SlipAnalysis 
   if (!candidates.length) reasons.push("No priced, +EV legs survive at this risk level");
   return { legs, bums, full, trimmed: null, verdict: "PASS", reasons };
 };
+
+/**
+ * Decimal odds of the ticket as entered (every leg, not a trimmed version): the Kalshi
+ * combo price or parlay odds, else the legs' own prices multiplied together. With no
+ * market prices at all, the model's fair odds (1 ÷ its win probability) stand in.
+ */
+export const ticketDecimal = (slip: BetSlip, ai: SlipAnalysis | null): number | null => {
+  if (slip.legs.length === 1) {
+    const leg = slip.legs[0];
+    const market = legDecimal(leg);
+    if (market) return market;
+    return ai ? 1 / clamp(ai.trueWinProbability, 0.01, 0.99) : null;
+  }
+  if (slip.comboPrice) return kalshiDecimal(slip.comboPrice);
+  if (slip.comboOdds) return americanToDecimal(slip.comboOdds);
+  const decimals = slip.legs.map(legDecimal);
+  if (decimals.every((d) => d !== null)) return product(decimals as number[]);
+  return ai ? 1 / clamp(ai.trueWinProbability, 0.0001, 0.99) : null;
+};

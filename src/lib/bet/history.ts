@@ -1,3 +1,4 @@
+import { profitSummary } from "@/lib/bet/pnl";
 import type { BetLeg, BetRecord, BetSlip, HistoryContext, HistoryInsights, RiskLevel } from "@/types/bet";
 
 export const HISTORY_KEY = "mcvindle_bet_history";
@@ -69,14 +70,14 @@ export const syncErrorMessage = (error: unknown) =>
   error instanceof Error && error.message !== "Failed to fetch" ? error.message : "Can't reach the server";
 
 export const fetchRemote = async (key: string): Promise<BetRecord[]> => {
-  const response = await fetch("/api/bet/history", { headers: headers(key), cache: "no-store" });
+  const response = await fetch("/api/vault", { headers: headers(key), cache: "no-store" });
   if (!response.ok) throw await failure(response);
   const { records } = (await response.json()) as { records: BetRecord[] };
   return records.map(normalizeRecord);
 };
 
 export const pushRemote = async (key: string, records: BetRecord[]) => {
-  const response = await fetch("/api/bet/history", {
+  const response = await fetch("/api/vault", {
     method: "POST",
     headers: headers(key),
     body: JSON.stringify({ records }),
@@ -85,7 +86,7 @@ export const pushRemote = async (key: string, records: BetRecord[]) => {
 };
 
 export const deleteRemote = async (key: string, id: string) => {
-  const response = await fetch(`/api/bet/history?id=${encodeURIComponent(id)}`, {
+  const response = await fetch(`/api/vault?id=${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: headers(key),
   });
@@ -171,7 +172,9 @@ export const historyContext = (records: BetRecord[]): HistoryContext => {
   const wins = settled.filter((r) => r.outcome === "WIN").length;
   const recent = [...records].sort((a, b) => b.createdAt - a.createdAt).slice(0, 20);
   const recentLegs = recent.flatMap((r) => r.slip.legs);
+  const { profit, staked } = profitSummary(records);
   return {
+    dollars: { profit, staked },
     settled: settled.length,
     winRate: settled.length ? wins / settled.length : null,
     roi: priced.length ? priced.reduce((a, b) => a + b, 0) / priced.length : null,

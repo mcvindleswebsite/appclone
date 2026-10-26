@@ -10,6 +10,7 @@ import {
   formatAmerican,
   kalshiDecimal,
   probToAmerican,
+  ticketDecimal,
   RISK_PROFILES,
   type Evaluation,
   type ParlayEvaluation,
@@ -30,6 +31,7 @@ import {
 } from "@/lib/bet/history";
 import { settleKalshi, settleLegs, tickerLink } from "@/lib/bet/kalshi-link";
 import { emptyLeg } from "@/lib/bet/parse-slip";
+import { DEFAULT_WAGER, formatMoney, withPnl } from "@/lib/bet/pnl";
 import { cn } from "@/lib/utils";
 import type { BetRecord, BetSlip, Outcome, RiskLevel, SlipAnalysis } from "@/types/bet";
 
@@ -42,6 +44,8 @@ import { RiskSlider } from "./RiskSlider";
 import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
 
+const STAKE_STORAGE = "mcvindle_bet_stake";
+
 const EMPTY_SLIP: BetSlip = { legs: [emptyLeg()], comboPrice: null, comboOdds: null };
 
 const pts = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}`;
@@ -51,47 +55,49 @@ const slipReady = (slip: BetSlip) => slip.legs.some((l) => l.market || l.matchup
 
 /** Snapshot of an evaluation for the vault. Module-level so the timestamps stay out of render. */
 const toRecord = (
-  base: Pick<BetRecord, "id" | "createdAt" | "outcome">,
+  base: Pick<BetRecord, "id" | "createdAt" | "outcome" | "wager">,
   slip: BetSlip,
   ai: SlipAnalysis | null,
   risk: RiskLevel
 ): BetRecord => {
-  const common = { ...base, updatedAt: Date.now(), slip, risk, ai: !!ai, aiRisk: ai?.riskScore };
+  // Payout is sized on the ticket as entered (all legs), whatever the verdict recommends.
+  const decimalOdds = ticketDecimal(slip, ai) ?? undefined;
+  const common = { ...base, updatedAt: Date.now(), slip, risk, ai: !!ai, aiRisk: ai?.riskScore, decimalOdds };
   if (slip.legs.length === 1) {
     const e = evaluate(slip.legs[0], risk, ai);
     const side = e.side ?? (e.sides.YES.edge >= e.sides.NO.edge ? "YES" : "NO");
     const s = e.sides[side];
-    return {
+    return withPnl({
       ...common,
       side: e.side,
       verdict: e.verdict === "PASS" ? "PASS" : `${e.verdict} @ ${Math.round(s.price * 100)}¢`,
       probability: s.probability,
       edge: s.edge,
-      decimalOdds: kalshiDecimal(Math.round(s.price * 100)),
       summary: ai?.reasoning ?? `${e.verdict}: ${e.reasons.join(". ")}.`,
-    };
+    });
   }
   const p = evaluateParlay(slip, risk, ai);
   const line = p.trimmed ?? p.full;
-  return {
+  return withPnl({
     ...common,
     side: null,
     verdict: p.verdict === "PLAY TRIMMED SLIP" ? `PLAY TRIMMED SLIP (${line.indexes.length}/${slip.legs.length} legs)` : p.verdict,
     probability: line.probability,
     edge: line.ev ?? 0,
-    decimalOdds: line.decimal ?? undefined,
     summary: ai?.reasoning ?? p.reasons.join(". "),
-  };
+  });
 };
 
 const newRecordBase = () => ({ id: crypto.randomUUID(), createdAt: Date.now(), outcome: "PENDING" as const });
 
-const stampOutcome = (record: BetRecord, outcome: Outcome): BetRecord => ({ ...record, outcome, updatedAt: Date.now() });
+const stampOutcome = (record: BetRecord, outcome: Outcome): BetRecord => withPnl({ ...record, outcome, updatedAt: Date.now() });
+
+const stampWager = (record: BetRecord, wager: number): BetRecord => withPnl({ ...record, wager, updatedAt: Date.now() });
 
 /** A vault entry for a bet already placed on Kalshi. */
-const importedRecord = (slip: BetSlip, outcome: Outcome, paidCents: number | null): BetRecord => {
+const importedRecord = (slip: BetSlip, outcome: Outcome, paidCents: number | null, wager: number): BetRecord => {
   const price = paidCents ?? (outcome === "PENDING" ? (slip.legs.length > 1 ? slip.comboPrice : slip.legs[0].price) : null);
-  return {
+  return withPnl({
     ...newRecordBase(),
     outcome,
     updatedAt: Date.now(),
@@ -101,11 +107,13 @@ const importedRecord = (slip: BetSlip, outcome: Outcome, paidCents: number | nul
     verdict: price ? `LOGGED @ ${price}¢` : "LOGGED",
     probability: price ? price / 100 : 0,
     edge: 0,
-    decimalOdds: price ? kalshiDecimal(price) : undefined,
+    // What was paid, else the ticket's current market odds.
+    decimalOdds: price ? kalshiDecimal(price) : (ticketDecimal(slip, null) ?? undefined),
+    wager,
     summary: "Added from a Kalshi link.",
     ai: false,
     imported: true,
-  };
+  });
 };
 
 export function BetApp() {
@@ -123,6 +131,9 @@ export function BetApp() {
   const [booted, setBooted] = useState(false);
   const [sync, setSync] = useState<SyncStatus>("local");
   const [ocrText, setOcrText] = useState<string | null>(null);
+  /** One dollar stake for the whole ticket (not per leg); remembered between visits. */
+  const [stake, setStake] = useState(DEFAULT_WAGER);
+  const [stakeText, setStakeText] = useState(String(DEFAULT_WAGER));
   const recordsRef = useRef<BetRecord[]>([]);
   /** Bumped by every new slip, so a slow research reply for an old slip is discarded. */
   const evalSeq = useRef(0);
@@ -170,6 +181,11 @@ export function BetApp() {
       const local = loadLocal();
       recordsRef.current = local;
       setRecords(local);
+      const savedStake = Number(localStorage.getItem(STAKE_STORAGE));
+      if (savedStake > 0) {
+        setStake(savedStake);
+        setStakeText(String(savedStake));
+      }
       const key = localStorage.getItem(ACCESS_KEY_STORAGE) ?? "";
       setAccessKey(key);
       setBooted(true);
@@ -202,7 +218,7 @@ export function BetApp() {
     if (!accessKey) {
       if (!auto) {
         setNotice("No access key — saved with market pricing only, no research.");
-        const record = toRecord(newRecordBase(), target, null, risk);
+        const record = toRecord({ ...newRecordBase(), wager: stake }, target, null, risk);
         setActiveId(record.id);
         commit([record, ...recordsRef.current], [record]);
       }
@@ -237,7 +253,7 @@ export function BetApp() {
     setAi(result);
     const failed = result.legs.filter((l) => !l.researched).length;
     if (failed) setNotice(`Research failed for ${failed} leg${failed > 1 ? "s" : ""} — those are rated on price alone.`);
-    const record = toRecord(newRecordBase(), target, result, risk);
+    const record = toRecord({ ...newRecordBase(), wager: stake }, target, result, risk);
     setActiveId(record.id);
     commit([record, ...recordsRef.current], [record]);
   };
@@ -301,7 +317,17 @@ export function BetApp() {
   };
 
   /** Logs a bet placed on Kalshi, settled leg by leg from Kalshi's results (no AI). */
-  const quickAdd = async (links: string, paidCents: number | null) => {
+  const changeStake = (value: number) => {
+    setStake(value);
+    if (value > 0) localStorage.setItem(STAKE_STORAGE, String(value));
+    // The pick just saved takes the new stake too.
+    const existing = recordsRef.current.find((r) => r.id === activeId);
+    if (!existing || !(value > 0)) return;
+    const updated = stampWager(existing, value);
+    commit(recordsRef.current.map((r) => (r.id === existing.id ? updated : r)), [updated]);
+  };
+
+  const quickAdd = async (links: string, paidCents: number | null, wager: number) => {
     const data = await settleKalshi(links);
     const slipFromLink: BetSlip = {
       legs: data.legs,
@@ -309,7 +335,7 @@ export function BetApp() {
       comboOdds: null,
       comboTicker: data.comboTicker ?? undefined,
     };
-    const record = importedRecord(slipFromLink, data.outcome, paidCents);
+    const record = importedRecord(slipFromLink, data.outcome, paidCents, wager);
     commit([record, ...recordsRef.current], [record]);
     const legs = data.legsTotal > 1 ? ` · ${data.legsHit}/${data.legsTotal} legs hit` : "";
     const skipped = data.skipped ? ` (${data.skipped} game link${data.skipped > 1 ? "s" : ""} skipped — link the market itself)` : "";
@@ -503,6 +529,43 @@ export function BetApp() {
               {!multi && (
                 <PickCard leg={leg} analysis={ai} evaluation={single} researching={running} hasKey={!!accessKey} />
               )}
+
+              <div className={cn(T.card, "flex flex-col gap-2 p-4 sm:p-5")}>
+                <label htmlFor="bet-stake" className={T.label}>
+                  Overall Wager / Stake ($)
+                </label>
+                <div className="flex items-center gap-3">
+                  <div className="relative w-36 shrink-0">
+                    <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[#F5F7F4]/50">$</span>
+                    <input
+                      id="bet-stake"
+                      inputMode="decimal"
+                      value={stakeText}
+                      onChange={(e) => {
+                        const text = e.target.value.replace(/[^\d.]/g, "").slice(0, 9);
+                        setStakeText(text);
+                        changeStake(Math.min(100_000, Number(text) || 0));
+                      }}
+                      placeholder="10"
+                      className={cn(T.input, "pl-7 tabular-nums")}
+                    />
+                  </div>
+                  <p className={cn("text-xs leading-snug", T.muted)}>
+                    {(() => {
+                      const decimal = ticketDecimal(slip, ai);
+                      if (!stake) return "Enter one stake for the whole ticket.";
+                      if (!decimal) return `One stake for the whole ${multi ? "parlay" : "bet"} — payout shows once it's priced or researched.`;
+                      const priced = multi ? !!(slip.comboPrice || slip.comboOdds || slip.legs.every((l) => l.price || l.americanOdds)) : !!(leg.price || leg.americanOdds);
+                      return (
+                        <>
+                          Pays <span className="font-kalshi-bold text-white">{formatMoney(stake * decimal)}</span> if it hits
+                          {priced ? "" : " (model odds)"}
+                        </>
+                      );
+                    })()}
+                  </p>
+                </div>
+              </div>
 
               <button
                 type="button"

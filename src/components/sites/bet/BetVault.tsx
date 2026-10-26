@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { RISK_PROFILES } from "@/lib/bet/engine";
 import { buildInsights, historyContext, legTally, slipLabel, sportsOf } from "@/lib/bet/history";
+import { DEFAULT_WAGER, formatMoney, profitSummary } from "@/lib/bet/pnl";
 import { cn } from "@/lib/utils";
 import type { BetLeg, BetRecord, LegResult, Outcome } from "@/types/bet";
 
@@ -38,9 +39,14 @@ const verdictColor = (verdict: string) =>
   /^(BUY YES|PLAY)/.test(verdict) ? T.yes : verdict.startsWith("BUY NO") ? T.no : T.muted;
 
 /** The vault's link bar: logs a bet already placed on Kalshi, settled or still open. */
-function QuickAdd({ onQuickAdd }: { onQuickAdd: (links: string, paidCents: number | null) => Promise<string> }) {
+function QuickAdd({
+  onQuickAdd,
+}: {
+  onQuickAdd: (links: string, paidCents: number | null, wager: number) => Promise<string>;
+}) {
   const [links, setLinks] = useState("");
   const [paid, setPaid] = useState("");
+  const [wager, setWager] = useState(String(DEFAULT_WAGER));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
@@ -50,7 +56,7 @@ function QuickAdd({ onQuickAdd }: { onQuickAdd: (links: string, paidCents: numbe
     setMessage(null);
     try {
       const n = Number(paid);
-      setMessage({ text: await onQuickAdd(links.trim(), n >= 1 && n <= 99 ? n : null), ok: true });
+      setMessage({ text: await onQuickAdd(links.trim(), n >= 1 && n <= 99 ? n : null, Number(wager) || 0), ok: true });
       setLinks("");
       setPaid("");
     } catch (error) {
@@ -94,6 +100,17 @@ function QuickAdd({ onQuickAdd }: { onQuickAdd: (links: string, paidCents: numbe
           aria-label="Price you paid, in cents"
           className={cn(T.input, "sm:w-24")}
         />
+        <div className="relative sm:w-28">
+          <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[#F5F7F4]/50">$</span>
+          <input
+            inputMode="decimal"
+            value={wager}
+            onChange={(e) => setWager(e.target.value.replace(/[^\d.]/g, "").slice(0, 9))}
+            placeholder="Stake"
+            aria-label="Overall wager on the ticket, in dollars"
+            className={cn(T.input, "pl-7 tabular-nums")}
+          />
+        </div>
         <button
           type="submit"
           disabled={busy || !links.trim()}
@@ -117,7 +134,7 @@ export function BetVault({
   records: BetRecord[];
   onOutcome: (id: string, outcome: Outcome) => void;
   onDelete: (id: string) => void;
-  onQuickAdd: (links: string, paidCents: number | null) => Promise<string>;
+  onQuickAdd: (links: string, paidCents: number | null, wager: number) => Promise<string>;
   onRefresh: () => Promise<string>;
 }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
@@ -133,6 +150,7 @@ export function BetVault({
   const [refreshNote, setRefreshNote] = useState<string | null>(null);
   const insights = buildInsights(records);
   const { roi } = historyContext(records);
+  const money = profitSummary(records);
   const settled = insights.record.wins + insights.record.losses;
   const refreshable = records.some((r) => r.outcome === "PENDING" && (r.slip.comboTicker || r.slip.legs.some((l) => l.ticker)));
 
@@ -179,14 +197,32 @@ export function BetVault({
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
-          { label: "Picks Logged", value: insights.total },
-          { label: "Record", value: `${insights.record.wins}-${insights.record.losses}` },
-          { label: "Hit Rate", value: settled ? `${Math.round((insights.record.wins / settled) * 100)}%` : "—" },
-          { label: "ROI / Unit", value: roi === null ? "—" : `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%` },
+          {
+            label: "Total P/L",
+            value: money.staked ? formatMoney(money.profit, true) : "—",
+            sub: money.staked ? `on ${formatMoney(money.staked)} staked` : "No settled stakes yet",
+            tone: money.staked ? (money.profit >= 0 ? "text-[#00DD94]" : "text-[#FF3B30]") : undefined,
+          },
+          {
+            label: "Hit Rate",
+            value: settled ? `${Math.round((insights.record.wins / settled) * 100)}%` : "—",
+            sub: `${insights.record.wins}-${insights.record.losses} · ${insights.record.pending} pending`,
+          },
+          {
+            label: "ROI / Unit",
+            value: roi === null ? "—" : `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%`,
+            sub: "Flat 1-unit stakes",
+          },
+          {
+            label: "Dollar ROI",
+            value: money.roi === null ? "—" : `${money.roi >= 0 ? "+" : ""}${(money.roi * 100).toFixed(1)}%`,
+            sub: `${money.picks} staked pick${money.picks === 1 ? "" : "s"} settled`,
+          },
         ].map((stat) => (
           <div key={stat.label} className={cn(T.card, "p-4")}>
             <p className={T.label}>{stat.label}</p>
-            <p className="font-kalshi-condensed mt-1 text-3xl tabular-nums">{stat.value}</p>
+            <p className={cn("font-kalshi-condensed mt-1 text-3xl tabular-nums", stat.tone)}>{stat.value}</p>
+            <p className={cn("mt-0.5 text-[11px]", T.muted)}>{stat.sub}</p>
           </div>
         ))}
       </div>
@@ -314,6 +350,19 @@ export function BetVault({
                 <div className="flex shrink-0 flex-row items-center justify-between gap-3 md:flex-col md:items-end">
                   <div className="text-right">
                     <p className={cn("font-kalshi-bold text-sm", verdictColor(r.verdict))}>{r.verdict}</p>
+                    {r.wager ? (
+                      <p className="text-[11px] tabular-nums">
+                        <span className={T.muted}>
+                          {formatMoney(r.wager)}
+                          {r.potentialPayout ? ` → ${formatMoney(r.potentialPayout)}` : ""}
+                        </span>
+                        {r.netProfit !== null && r.netProfit !== undefined && (
+                          <span className={cn("font-kalshi-bold ml-1.5", r.netProfit >= 0 ? "text-[#00DD94]" : "text-[#FF3B30]")}>
+                            {formatMoney(r.netProfit, true)}
+                          </span>
+                        )}
+                      </p>
+                    ) : null}
                     {!r.imported && (
                       <p className={cn("text-[11px] tabular-nums", T.muted)}>
                         {(r.probability * 100).toFixed(r.probability < 0.1 ? 1 : 0)}% · {r.edge >= 0 ? "+" : ""}

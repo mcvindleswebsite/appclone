@@ -1,5 +1,6 @@
 import { resolveKalshiLinks } from "@/lib/bet/kalshi-api";
 import { settleLegs, tickerLink } from "@/lib/bet/kalshi-link";
+import { withPnl } from "@/lib/bet/pnl";
 import type { BetRecord } from "@/types/bet";
 
 /** Combos settle as one market but can bundle more legs than the evaluator handles. */
@@ -33,7 +34,8 @@ export const settleRecord = async (r: BetRecord): Promise<BetRecord | null> => {
 
   const changed = outcome !== r.outcome || nextLegs.some((l, i) => l.result !== r.slip.legs[i]?.result);
   if (!changed) return null;
-  return { ...r, outcome, updatedAt: Date.now(), slip: { ...r.slip, legs: nextLegs } };
+  // A WIN books payout − wager, a LOSS books −wager.
+  return withPnl({ ...r, outcome, updatedAt: Date.now(), slip: { ...r.slip, legs: nextLegs } });
 };
 
 /** Settles pending picks a few at a time, so a big vault doesn't flood Kalshi's API. */

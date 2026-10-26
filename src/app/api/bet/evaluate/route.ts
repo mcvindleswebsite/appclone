@@ -216,7 +216,9 @@ const describeHistory = (h: HistoryContext | null) => {
   const rate = (r: { hit: number; settled: number }) => `${r.hit}/${r.settled} (${pct(r.settled ? r.hit / r.settled : null)})`;
   const legs = h.legs ?? { hit: 0, settled: 0, bySport: [], byType: [] };
   return [
-    `Settled picks: ${h.settled} · win rate ${pct(h.winRate)} · ROI ${pct(h.roi)} per unit staked`,
+    `Settled picks: ${h.settled} · win rate ${pct(h.winRate)} · ROI ${pct(h.roi)} per unit staked${
+      h.dollars?.staked ? ` · net ${h.dollars.profit >= 0 ? "+" : "-"}$${Math.abs(h.dollars.profit).toFixed(2)} on $${h.dollars.staked.toFixed(2)} staked` : ""
+    }`,
     legs.settled
       ? [
           `Leg hit rate over these picks: ${rate(legs)}`,

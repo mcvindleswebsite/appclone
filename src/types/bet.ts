@@ -105,8 +105,14 @@ export interface BetRecord {
   ai: boolean;
   /** AI variance rating, when researched. */
   aiRisk?: RiskLevel;
-  /** Decimal odds the pick was taken at, for ROI. */
+  /** Decimal odds of the whole ticket as placed (market price, else model fair odds), for ROI. */
   decimalOdds?: number;
+  /** Dollars staked on the whole ticket (one stake per parlay, not per leg). */
+  wager?: number;
+  /** wager × decimalOdds; null when the ticket has no odds to size it. */
+  potentialPayout?: number | null;
+  /** Payout − wager on a WIN, −wager on a LOSS, null while pending or unsized. */
+  netProfit?: number | null;
   /** Added from a past Kalshi link rather than evaluated here. */
   imported?: boolean;
   outcome: Outcome;
@@ -126,6 +132,8 @@ export interface HistoryContext {
   winRate: number | null;
   /** Units won per unit staked over settled picks. */
   roi: number | null;
+  /** Dollar results over settled picks that have a stake. */
+  dollars?: { profit: number; staked: number };
   recent: { date: string; legs: string; verdict: string; outcome: Outcome; odds: number | null; legsHit: string | null }[];
   /** Leg-level accuracy over the same recent picks. */
   legs: {
