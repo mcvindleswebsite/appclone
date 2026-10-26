@@ -1,10 +1,10 @@
 "use client";
 
-import { Trash2 } from "lucide-react";
+import { Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { RISK_PROFILES } from "@/lib/bet/engine";
-import { buildInsights } from "@/lib/bet/history";
+import { buildInsights, historyContext, slipLabel, sportsOf } from "@/lib/bet/history";
 import { cn } from "@/lib/utils";
 import type { BetRecord, Outcome } from "@/types/bet";
 
@@ -19,30 +19,116 @@ const OUTCOME_STYLES: Record<Outcome, string> = {
 };
 
 const verdictColor = (verdict: string) =>
-  verdict.startsWith("BUY YES") ? T.yes : verdict.startsWith("BUY NO") ? T.no : T.muted;
+  /^(BUY YES|PLAY)/.test(verdict) ? T.yes : verdict.startsWith("BUY NO") ? T.no : T.muted;
+
+/** The vault's link bar: logs a bet already placed on Kalshi, settled or still open. */
+function QuickAdd({ onQuickAdd }: { onQuickAdd: (links: string, paidCents: number | null) => Promise<string> }) {
+  const [links, setLinks] = useState("");
+  const [paid, setPaid] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const submit = async () => {
+    if (!links.trim()) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const n = Number(paid);
+      setMessage({ text: await onQuickAdd(links.trim(), n >= 1 && n <= 99 ? n : null), ok: true });
+      setLinks("");
+      setPaid("");
+    } catch (error) {
+      setMessage({ text: error instanceof Error ? error.message : "Couldn't add that bet", ok: false });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={cn(T.card, "flex flex-col gap-2 p-4")}>
+      <p className={T.label}>Quick Add Past Bet</p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+        className="flex flex-col gap-2 sm:flex-row"
+      >
+        <div className="relative min-w-0 flex-1">
+          <Link2 className="pointer-events-none absolute top-2.5 left-3 size-4 text-[#F5F7F4]/35" />
+          <textarea
+            rows={links.includes("\n") ? 3 : 1}
+            value={links}
+            onChange={(e) => setLinks(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder="Kalshi market or combo link you bet on (one per line for separate legs)"
+            className={cn(T.input, "resize-none pl-9")}
+          />
+        </div>
+        <input
+          inputMode="numeric"
+          value={paid}
+          onChange={(e) => setPaid(e.target.value.replace(/\D/g, "").slice(0, 2))}
+          placeholder="Paid ¢"
+          aria-label="Price you paid, in cents"
+          className={cn(T.input, "sm:w-24")}
+        />
+        <button
+          type="submit"
+          disabled={busy || !links.trim()}
+          className="font-kalshi-bold flex items-center justify-center gap-1.5 rounded-lg bg-[#00DD94] px-4 py-2 text-xs text-[#050D0A] disabled:opacity-40"
+        >
+          {busy && <Loader2 className="size-3.5 animate-spin" />} Add to Vault
+        </button>
+      </form>
+      {message && <p className={cn("text-xs", message.ok ? T.yes : T.no)}>{message.text}</p>}
+    </div>
+  );
+}
 
 export function BetVault({
   records,
   onOutcome,
   onDelete,
+  onQuickAdd,
+  onRefresh,
 }: {
   records: BetRecord[];
   onOutcome: (id: string, outcome: Outcome) => void;
   onDelete: (id: string) => void;
+  onQuickAdd: (links: string, paidCents: number | null) => Promise<string>;
+  onRefresh: () => Promise<string>;
 }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
   const insights = buildInsights(records);
+  const { roi } = historyContext(records);
   const settled = insights.record.wins + insights.record.losses;
+  const refreshable = records.some((r) => r.outcome === "PENDING" && (r.slip.comboTicker || r.slip.legs.some((l) => l.ticker)));
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setRefreshNote(await onRefresh());
+    setRefreshing(false);
+  };
   const shown = filter === "ALL" ? records : records.filter((r) => r.outcome === filter);
 
   return (
     <div className="flex flex-col gap-4">
+      <QuickAdd onQuickAdd={onQuickAdd} />
+
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
           { label: "Picks Logged", value: insights.total },
           { label: "Record", value: `${insights.record.wins}-${insights.record.losses}` },
           { label: "Hit Rate", value: settled ? `${Math.round((insights.record.wins / settled) * 100)}%` : "—" },
-          { label: "Pending", value: insights.record.pending },
+          { label: "ROI / Unit", value: roi === null ? "—" : `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%` },
         ].map((stat) => (
           <div key={stat.label} className={cn(T.card, "p-4")}>
             <p className={T.label}>{stat.label}</p>
@@ -69,7 +155,8 @@ export function BetVault({
         </div>
       )}
 
-      <div className="flex gap-1 rounded-full bg-[#121824] p-1 self-start">
+      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex gap-1 rounded-full bg-[#121824] p-1">
         {FILTERS.map((f) => (
           <button
             key={f}
@@ -81,8 +168,21 @@ export function BetVault({
             )}
           >
             {f === "ALL" ? "All" : f[0] + f.slice(1).toLowerCase()}
+            {f === "PENDING" && insights.record.pending ? ` · ${insights.record.pending}` : ""}
           </button>
         ))}
+      </div>
+      {refreshable && (
+        <button
+          type="button"
+          disabled={refreshing}
+          onClick={() => void refresh()}
+          className="flex items-center gap-1.5 rounded-full bg-[#121824] px-4 py-2 text-xs font-semibold text-[#F5F7F4]/85 hover:text-white disabled:opacity-50"
+        >
+          <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} /> Check Kalshi results
+        </button>
+      )}
+      {refreshNote && <span className={cn("text-xs", T.muted)}>{refreshNote}</span>}
       </div>
 
       {shown.length === 0 ? (
@@ -95,7 +195,7 @@ export function BetVault({
             <li key={r.id} className={cn(T.card, "flex flex-col gap-3 p-4 md:flex-row md:items-start")}>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="rounded bg-[#1E2638] px-2 py-0.5 font-semibold">{r.slip.sport}</span>
+                  <span className="rounded bg-[#1E2638] px-2 py-0.5 font-semibold">{sportsOf(r).join(" · ")}</span>
                   <span className={T.muted}>
                     {new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                   </span>
@@ -103,21 +203,36 @@ export function BetVault({
                     · Risk {r.risk} {RISK_PROFILES[r.risk].label}
                   </span>
                   {r.ai && <span className="rounded bg-[#014737] px-1.5 py-0.5 text-[#00DD94]">AI</span>}
+                  {r.imported && <span className="rounded bg-[#1E2638] px-1.5 py-0.5">Logged from Kalshi</span>}
                 </div>
-                <p className="font-kalshi-bold mt-1.5 truncate">{r.slip.matchup || r.slip.marketTitle}</p>
-                <p className={cn("truncate text-xs", T.muted)}>
-                  {r.slip.marketTitle} · YES {r.slip.pick} @ {r.slip.yesPrice}¢
-                </p>
+                <p className="font-kalshi-bold mt-1.5 truncate">{slipLabel(r.slip)}</p>
+                {r.slip.legs.length === 1 ? (
+                  <p className={cn("truncate text-xs", T.muted)}>
+                    {r.slip.legs[0].matchup}
+                    {r.slip.legs[0].price ? ` · ${r.slip.legs[0].pick} @ ${r.slip.legs[0].price}¢` : ""}
+                  </p>
+                ) : (
+                  <ol className={cn("mt-1 flex flex-col text-xs", T.muted)}>
+                    {r.slip.legs.slice(0, 12).map((leg, i) => (
+                      <li key={i} className="truncate">
+                        {i + 1}. {leg.market || leg.pick}
+                      </li>
+                    ))}
+                  </ol>
+                )}
                 <p className="mt-2 text-xs leading-relaxed text-[#F5F7F4]/85">{r.summary}</p>
               </div>
 
               <div className="flex shrink-0 flex-row items-center justify-between gap-3 md:flex-col md:items-end">
                 <div className="text-right">
                   <p className={cn("font-kalshi-bold text-sm", verdictColor(r.verdict))}>{r.verdict}</p>
-                  <p className={cn("text-[11px] tabular-nums", T.muted)}>
-                    {Math.round(r.probability * 100)}% · {r.edge >= 0 ? "+" : ""}
-                    {(r.edge * 100).toFixed(1)} pts
-                  </p>
+                  {!r.imported && (
+                    <p className={cn("text-[11px] tabular-nums", T.muted)}>
+                      {(r.probability * 100).toFixed(r.probability < 0.1 ? 1 : 0)}% · {r.edge >= 0 ? "+" : ""}
+                      {(r.edge * 100).toFixed(1)}
+                      {r.slip.legs.length > 1 ? "% EV" : " pts"}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   {(["WIN", "LOSS", "PENDING"] as Outcome[]).map((o) => (

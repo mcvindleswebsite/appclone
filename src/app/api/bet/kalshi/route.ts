@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 
-import { extractTickers } from "@/lib/bet/kalshi-link";
-import type { KalshiImport, KalshiMarketOption } from "@/types/bet";
+import { detectSport } from "@/lib/bet/parse-slip";
+import { extractTickers, splitLinks } from "@/lib/bet/kalshi-link";
+import { MAX_LEGS, type KalshiImport, type KalshiMarketOption, type KalshiSlipImport } from "@/types/bet";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +14,12 @@ interface ApiMarket {
   title: string;
   yes_sub_title?: string;
   status: string;
+  result?: string;
   yes_bid_dollars?: string;
   yes_ask_dollars?: string;
+  no_ask_dollars?: string;
   last_price_dollars?: string;
+  mve_selected_legs?: { event_ticker: string; market_ticker: string; side: "yes" | "no" }[];
 }
 
 interface ApiEvent {
@@ -27,10 +31,14 @@ interface ApiEvent {
   markets?: ApiMarket[];
 }
 
+type Leg = KalshiSlipImport["legs"][number];
+
 const cents = (dollars?: string) => {
   const n = Number(dollars);
-  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+  return Number.isFinite(n) && n > 0 && n < 1 ? Math.round(n * 100) : null;
 };
+
+const resultOf = (m: ApiMarket) => (m.result === "yes" || m.result === "no" ? m.result : null);
 
 const toOption = (m: ApiMarket): KalshiMarketOption => ({
   ticker: m.ticker,
@@ -38,8 +46,10 @@ const toOption = (m: ApiMarket): KalshiMarketOption => ({
   pick: m.yes_sub_title || m.title,
   yesAsk: cents(m.yes_ask_dollars),
   yesBid: cents(m.yes_bid_dollars),
+  noAsk: cents(m.no_ask_dollars),
   lastPrice: cents(m.last_price_dollars),
   active: m.status === "active",
+  result: resultOf(m),
 });
 
 const get = async <T,>(path: string): Promise<T | null> => {
@@ -51,37 +61,111 @@ const get = async <T,>(path: string): Promise<T | null> => {
   return response.ok ? ((await response.json()) as T) : null;
 };
 
-const fromEvent = (event: ApiEvent, selected: string | null): KalshiImport => ({
+/** Per-request caches so a 12-leg combo on 3 games fetches each game once. */
+const createClient = () => {
+  const markets = new Map<string, Promise<ApiMarket | null>>();
+  const events = new Map<string, Promise<ApiEvent | null>>();
+  return {
+    market: (ticker: string) => {
+      if (!markets.has(ticker)) {
+        markets.set(ticker, get<{ market: ApiMarket }>(`/markets/${encodeURIComponent(ticker)}`).then((r) => r?.market ?? null));
+      }
+      return markets.get(ticker)!;
+    },
+    event: (ticker: string) => {
+      if (!events.has(ticker)) {
+        events.set(
+          ticker,
+          get<{ event: ApiEvent; markets?: ApiMarket[] }>(`/events/${encodeURIComponent(ticker)}?with_nested_markets=true`).then(
+            (r) => (r ? { ...r.event, markets: r.event.markets ?? r.markets } : null)
+          )
+        );
+      }
+      return events.get(ticker)!;
+    },
+  };
+};
+
+const toLeg = (m: ApiMarket, event: ApiEvent | null, side: "yes" | "no"): Leg => {
+  const name = m.yes_sub_title || m.title;
+  const result = resultOf(m);
+  return {
+    sport: detectSport(`${event?.product_metadata?.competition ?? ""} ${event?.title ?? ""} ${m.event_ticker}`),
+    matchup: event?.title ?? "",
+    market: side === "yes" ? m.title : `NO — ${m.title}`,
+    pick: side === "yes" ? name : `Not ${name}`,
+    price: side === "yes" ? (cents(m.yes_ask_dollars) ?? cents(m.last_price_dollars)) : cents(m.no_ask_dollars),
+    americanOdds: null,
+    ticker: m.ticker,
+    side,
+    result: result === null ? null : result === side ? "yes" : "no",
+  };
+};
+
+const toChoice = (event: ApiEvent): KalshiImport => ({
   eventTicker: event.event_ticker,
   title: event.title,
   subtitle: event.sub_title ?? "",
   competition: event.product_metadata?.competition ?? event.series_ticker,
   markets: (event.markets ?? []).map(toOption),
-  selected,
 });
 
 export async function GET(request: NextRequest) {
   const input = request.nextUrl.searchParams.get("url") ?? "";
-  if (!/kalshi/i.test(input) || input.length > 500 || extractTickers(input).length === 0) {
+  const links = splitLinks(input).slice(0, MAX_LEGS);
+  if (links.length === 0 || input.length > 6000) {
     return Response.json({ error: "Not a Kalshi link" }, { status: 400 });
   }
 
+  const kalshi = createClient();
+  const out: KalshiSlipImport = { choices: [], legs: [], comboPrice: null, comboTicker: null, comboResult: null };
+
   try {
-    for (const ticker of extractTickers(input)) {
-      // A market ticker resolves directly; load its event for the matchup and sibling sides.
-      const market = await get<{ market: ApiMarket }>(`/markets/${encodeURIComponent(ticker)}`);
-      const eventTicker = market?.market.event_ticker ?? ticker;
-      const event = await get<{ event: ApiEvent; markets?: ApiMarket[] }>(
-        `/events/${encodeURIComponent(eventTicker)}?with_nested_markets=true`
-      );
-      if (event) {
-        const merged = { ...event.event, markets: event.event.markets ?? event.markets };
-        const result: KalshiImport = fromEvent(merged, market?.market.ticker ?? null);
-        return Response.json(result);
+    const resolved = await Promise.all(
+      links.map(async (link) => {
+        for (const ticker of extractTickers(link)) {
+          const market = await kalshi.market(ticker);
+          if (market?.mve_selected_legs?.length) {
+            // A Kalshi combo: resolve every leg it bundles.
+            const legs = await Promise.all(
+              market.mve_selected_legs.slice(0, MAX_LEGS).map(async (l) => {
+                const [m, e] = await Promise.all([kalshi.market(l.market_ticker), kalshi.event(l.event_ticker)]);
+                return m ? toLeg(m, e, l.side) : null;
+              })
+            );
+            return { combo: market, legs: legs.filter((l): l is Leg => l !== null), choice: null };
+          }
+          if (market) {
+            return { combo: null, legs: [toLeg(market, await kalshi.event(market.event_ticker), "yes")], choice: null };
+          }
+          const event = await kalshi.event(ticker);
+          if (event) {
+            const open = (event.markets ?? []).filter((m) => m.status === "active" || resultOf(m));
+            if (open.length === 1) return { combo: null, legs: [toLeg(open[0], event, "yes")], choice: null };
+            return { combo: null, legs: [], choice: toChoice(event) };
+          }
+        }
+        return null;
+      })
+    );
+
+    for (const r of resolved) {
+      if (!r) continue;
+      if (r.combo) {
+        out.comboTicker = r.combo.ticker;
+        out.comboPrice = cents(r.combo.yes_ask_dollars) ?? cents(r.combo.last_price_dollars);
+        out.comboResult = resultOf(r.combo);
       }
+      out.legs.push(...r.legs);
+      if (r.choice) out.choices.push(r.choice);
     }
+    out.legs = out.legs.slice(0, MAX_LEGS);
   } catch {
     return Response.json({ error: "Kalshi didn't respond — try again" }, { status: 502 });
   }
-  return Response.json({ error: "Couldn't find a market in that link — open a specific game and copy its link" }, { status: 404 });
+
+  if (out.legs.length === 0 && out.choices.length === 0) {
+    return Response.json({ error: "Couldn't find a market in that link — open a specific game and copy its link" }, { status: 404 });
+  }
+  return Response.json(out);
 }

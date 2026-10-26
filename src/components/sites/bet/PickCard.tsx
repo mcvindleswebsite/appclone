@@ -4,9 +4,15 @@ import { Loader2 } from "lucide-react";
 
 import type { Evaluation } from "@/lib/bet/engine";
 import { cn } from "@/lib/utils";
-import type { AiSynthesis, BetSlip, InjuryFactor } from "@/types/bet";
+import type { BetLeg, InjuryFactor, SlipAnalysis } from "@/types/bet";
 
 import { T } from "./theme";
+
+const RATING_PILL = {
+  "STRONG VALUE": "border-[#00DD94]/50 bg-[#014737] text-[#00DD94]",
+  NEUTRAL: "border-[#F5C542]/40 bg-[#F5C542]/10 text-[#F5C542]",
+  "BUM PICK": "border-[#FF3B30]/50 bg-[#FF3B30]/15 text-[#FF3B30]",
+} as const;
 
 const EFFECT_STYLES: Record<InjuryFactor["effect"], string> = {
   helps: "border-[#00DD94]/40 bg-[#014737] text-[#00DD94]",
@@ -34,20 +40,24 @@ function HitPips({ hits, games }: { hits: number; games: number }) {
   );
 }
 
+/** Research card for a straight (one-leg) bet. */
 export function PickCard({
-  slip,
-  ai,
+  leg,
+  analysis,
   evaluation,
   researching,
   hasKey,
 }: {
-  slip: BetSlip;
-  ai: AiSynthesis | null;
+  leg: BetLeg;
+  analysis: SlipAnalysis | null;
   evaluation: Evaluation;
   researching: boolean;
   hasKey: boolean;
 }) {
-  const hasSlip = !!(slip.matchup || slip.marketTitle);
+  const research = analysis?.legs[0];
+  const ai = research?.researched && analysis ? { ...research, riskRating: analysis.riskScore, reasoning: analysis.reasoning } : null;
+  const slip = { ...leg, marketTitle: leg.market, yesPrice: leg.price };
+  const hasSlip = !!(leg.matchup || leg.market);
   const best = evaluation.side
     ? evaluation.sides[evaluation.side]
     : [evaluation.sides.YES, evaluation.sides.NO].sort((a, b) => b.edge - a.edge)[0];
@@ -60,12 +70,14 @@ export function PickCard({
           <p className="font-kalshi-bold mt-1 truncate text-lg">{slip.pick || slip.marketTitle || "No slip yet"}</p>
           {hasSlip && (
             <p className={cn("truncate text-xs", T.muted)}>
-              {slip.marketTitle || slip.matchup} · YES {slip.yesPrice}¢
+              {slip.marketTitle || slip.matchup}
+              {slip.yesPrice ? ` · YES ${slip.yesPrice}¢` : ""}
             </p>
           )}
         </div>
         {ai && (
-          <div className="flex shrink-0 gap-1.5 text-[11px]">
+          <div className="flex shrink-0 flex-wrap justify-end gap-1.5 text-[11px]">
+            <span className={cn("font-kalshi-bold rounded-full border px-2.5 py-1", RATING_PILL[ai.rating])}>{ai.rating}</span>
             <span className="font-kalshi-bold rounded-full bg-[#014737] px-2.5 py-1 text-[#00DD94]">
               Confidence {ai.hitConfidence}/10
             </span>
@@ -156,6 +168,7 @@ export function PickCard({
             </Metric>
           </div>
 
+          <p className={cn("text-sm", ai.rating === "BUM PICK" ? "text-[#FF3B30]" : "text-[#F5F7F4]/85")}>{ai.reason}</p>
           <p className="text-sm leading-relaxed text-[#F5F7F4]/85">{ai.reasoning}</p>
         </>
       )}

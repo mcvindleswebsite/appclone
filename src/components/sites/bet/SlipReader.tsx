@@ -38,7 +38,7 @@ const preprocess = async (file: Blob) => {
   return canvas;
 };
 
-export function SlipReader({ onParsed }: { onParsed: (fields: Partial<BetSlip>, rawText: string) => void }) {
+export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: string) => void }) {
   const [preview, setPreview] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);

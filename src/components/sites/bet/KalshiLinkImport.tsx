@@ -3,10 +3,9 @@
 import { ClipboardPaste, Link2, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { isKalshiLink } from "@/lib/bet/kalshi-link";
-import { detectSport } from "@/lib/bet/parse-slip";
+import { importKalshi, isKalshiLink, legFromOption } from "@/lib/bet/kalshi-link";
 import { cn } from "@/lib/utils";
-import type { BetSlip, KalshiImport, KalshiMarketOption } from "@/types/bet";
+import type { BetLeg, BetSlip, KalshiImport, KalshiMarketOption } from "@/types/bet";
 
 import { T } from "./theme";
 
@@ -14,56 +13,73 @@ const DISMISSED_KEY = "mcvindle_bet_clip_dismissed";
 
 const priceOf = (m: KalshiMarketOption) => m.yesAsk ?? m.lastPrice ?? m.yesBid;
 
-const toSlip = (event: KalshiImport, market: KalshiMarketOption): Partial<BetSlip> => ({
-  sport: detectSport(`${event.competition} ${event.title} ${event.eventTicker}`),
-  matchup: event.title,
-  marketTitle: market.title === event.title ? market.title : `${event.title}: ${market.title}`,
-  pick: market.pick,
-  yesPrice: priceOf(market) ?? 50,
-  americanOdds: null,
-});
+type Imported = Pick<BetSlip, "legs" | "comboPrice"> & { comboTicker?: string };
 
-export function KalshiLinkImport({ onImport }: { onImport: (fields: Partial<BetSlip>, label: string) => void }) {
+export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, label: string) => void }) {
   const [link, setLink] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [event, setEvent] = useState<KalshiImport | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
+  /** Event-only links still waiting for the user to pick a side, plus legs already resolved. */
+  const [choices, setChoices] = useState<KalshiImport[]>([]);
+  const [pending, setPending] = useState<Imported | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const lastSeen = useRef<string | null>(null);
 
-  const choose = useCallback(
-    (data: KalshiImport, market: KalshiMarketOption) => {
-      setChosen(market.ticker);
-      onImport(toSlip(data, market), `${market.pick} @ ${priceOf(market) ?? "?"}¢`);
+  const finish = useCallback(
+    (slip: Imported) => {
+      setPending(null);
+      setChoices([]);
+      const label =
+        slip.legs.length === 1
+          ? `${slip.legs[0].pick}${slip.legs[0].price ? ` @ ${slip.legs[0].price}¢` : ""}`
+          : `${slip.legs.length} legs${slip.comboTicker ? " (Kalshi combo)" : ""}`;
+      onImport(slip, label);
     },
     [onImport]
   );
 
+  const choose = (market: KalshiMarketOption) => {
+    if (!pending || !choices[0]) return;
+    const next = { ...pending, legs: [...pending.legs, legFromOption(choices[0], market)] };
+    const rest = choices.slice(1);
+    if (rest.length) {
+      setPending(next);
+      setChoices(rest);
+    } else finish(next);
+  };
+
   const importLink = useCallback(
-    async (url: string) => {
-      setLink(url);
+    async (text: string) => {
+      setLink(text);
       setError(null);
-      setEvent(null);
-      setChosen(null);
+      setChoices([]);
+      setPending(null);
       setLoading(true);
-      lastSeen.current = url;
+      lastSeen.current = text;
       try {
-        const response = await fetch(`/api/bet/kalshi?url=${encodeURIComponent(url)}`);
-        const data = (await response.json()) as KalshiImport | { error: string };
-        if ("error" in data) return setError(data.error);
-        setEvent(data);
-        const markets = data.markets.filter((m) => m.active);
-        // Auto-fill when the link named one market, or the event only has one.
-        const direct = data.markets.find((m) => m.ticker === data.selected) ?? (markets.length === 1 ? markets[0] : null);
-        if (direct) choose(data, direct);
-      } catch {
-        setError("Couldn't reach Kalshi — try again");
+        const data = await importKalshi(text);
+        const legs: BetLeg[] = data.legs.map((l) => ({
+          sport: l.sport,
+          matchup: l.matchup,
+          market: l.market,
+          pick: l.pick,
+          price: l.price,
+          americanOdds: l.americanOdds,
+          ticker: l.ticker,
+          side: l.side,
+        }));
+        const slip: Imported = { legs, comboPrice: data.comboPrice, comboTicker: data.comboTicker ?? undefined };
+        if (data.choices.length) {
+          setPending(slip);
+          setChoices(data.choices);
+        } else finish(slip);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't reach Kalshi — try again");
       } finally {
         setLoading(false);
       }
     },
-    [choose]
+    [finish]
   );
 
   /**
@@ -115,6 +131,7 @@ export function KalshiLinkImport({ onImport }: { onImport: (fields: Partial<BetS
     setToast(null);
   };
 
+  const event = choices[0];
   const options = event?.markets.filter((m) => m.active && priceOf(m) !== null).slice(0, 12) ?? [];
 
   return (
@@ -165,14 +182,19 @@ export function KalshiLinkImport({ onImport }: { onImport: (fields: Partial<BetS
           className="flex gap-2"
         >
           <div className="relative min-w-0 flex-1">
-            <Link2 className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[#F5F7F4]/35" />
-            <input
-              type="url"
-              inputMode="url"
+            <Link2 className="pointer-events-none absolute top-2.5 left-3 size-4 text-[#F5F7F4]/35" />
+            <textarea
+              rows={link.includes("\n") ? 3 : 1}
               value={link}
               onChange={(e) => setLink(e.target.value)}
-              placeholder="Paste a kalshi.com market link"
-              className={cn(T.input, "pl-9")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (link.trim()) void importLink(link.trim());
+                }
+              }}
+              placeholder="Paste Kalshi links — a combo, or one leg per line"
+              className={cn(T.input, "resize-none pl-9")}
             />
           </div>
           <button
@@ -205,18 +227,18 @@ export function KalshiLinkImport({ onImport }: { onImport: (fields: Partial<BetS
               <p className={cn("text-xs", T.muted)}>No open markets with a live price on this event.</p>
             ) : (
               <>
-                <p className={cn("text-[11px]", T.muted)}>Pick the YES side to evaluate:</p>
+                <p className={cn("text-[11px]", T.muted)}>
+                  Pick your side{choices.length > 1 ? ` (${choices.length} games left)` : ""}:
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   {options.map((m) => (
                     <button
                       key={m.ticker}
                       type="button"
-                      onClick={() => choose(event, m)}
+                      onClick={() => choose(m)}
                       className={cn(
                         "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                        chosen === m.ticker
-                          ? "border-[#00DD94] bg-[#014737] text-white"
-                          : "border-[#1E2638] bg-[#121824] hover:border-[#00DD94]/50"
+                        "border-[#1E2638] bg-[#121824] hover:border-[#00DD94]/50"
                       )}
                     >
                       <span className="truncate">{m.pick}</span>

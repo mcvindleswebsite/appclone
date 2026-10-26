@@ -1,12 +1,37 @@
-import type { BetRecord, HistoryInsights, RiskLevel } from "@/types/bet";
+import type { BetLeg, BetRecord, BetSlip, HistoryContext, HistoryInsights, RiskLevel } from "@/types/bet";
 
 export const HISTORY_KEY = "mcvindle_bet_history";
 export const ACCESS_KEY_STORAGE = "mcvindle_bet_access_key";
 
+interface LegacySlip {
+  sport: string;
+  matchup: string;
+  marketTitle: string;
+  pick: string;
+  yesPrice: number;
+  americanOdds: number | null;
+}
+
+/** Upgrades records saved before slips had legs (one flat bet per slip). */
+export const normalizeRecord = (record: BetRecord): BetRecord => {
+  const slip = record.slip as BetSlip | LegacySlip;
+  if ("legs" in slip && Array.isArray(slip.legs)) return record;
+  const old = slip as LegacySlip;
+  const leg: BetLeg = {
+    sport: old.sport ?? "Other",
+    matchup: old.matchup ?? "",
+    market: old.marketTitle ?? "",
+    pick: old.pick ?? "",
+    price: typeof old.yesPrice === "number" ? old.yesPrice : null,
+    americanOdds: old.americanOdds ?? null,
+  };
+  return { ...record, slip: { legs: [leg], comboPrice: null, comboOdds: null } };
+};
+
 export const loadLocal = (): BetRecord[] => {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]");
-    return Array.isArray(parsed) ? (parsed as BetRecord[]) : [];
+    return Array.isArray(parsed) ? (parsed as BetRecord[]).map(normalizeRecord) : [];
   } catch {
     return [];
   }
@@ -47,7 +72,7 @@ export const fetchRemote = async (key: string): Promise<BetRecord[]> => {
   const response = await fetch("/api/bet/history", { headers: headers(key), cache: "no-store" });
   if (!response.ok) throw await failure(response);
   const { records } = (await response.json()) as { records: BetRecord[] };
-  return records;
+  return records.map(normalizeRecord);
 };
 
 export const pushRemote = async (key: string, records: BetRecord[]) => {
@@ -81,11 +106,53 @@ const tally = <K extends string>(records: BetRecord[], keyOf: (r: BetRecord) => 
   return [...map.entries()].sort((a, b) => b[1].count - a[1].count);
 };
 
-export const teamsOf = (r: BetRecord) =>
-  r.slip.matchup
-    .split(/\s+(?:vs\.?|v\.?|@|at)\s+/i)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 1);
+export const teamsOf = (r: BetRecord) => [
+  ...new Set(
+    r.slip.legs.flatMap((leg) =>
+      leg.matchup
+        .split(/\s+(?:vs\.?|v\.?|@|at)\s+/i)
+        .map((t) => t.trim())
+        .filter((t) => t.length > 1)
+    )
+  ),
+];
+
+export const sportsOf = (r: BetRecord) => [...new Set(r.slip.legs.map((leg) => leg.sport))];
+
+/** Short human label for a slip: "Durant 25+ pts" or "4-leg parlay: Durant, Brunson, …". */
+export const slipLabel = (slip: BetSlip) => {
+  const names = slip.legs.map((l) => l.pick || l.market || l.matchup).filter(Boolean);
+  if (slip.legs.length <= 1) return slip.legs[0]?.market || slip.legs[0]?.matchup || names[0] || "Bet";
+  return `${slip.legs.length}-leg parlay: ${names.slice(0, 3).join(", ")}${names.length > 3 ? ", …" : ""}`;
+};
+
+/** Units won on a settled pick at one unit staked; null while pending or without odds. */
+const unitsWon = (r: BetRecord) => {
+  if (r.outcome === "PENDING" || !r.decimalOdds) return null;
+  return r.outcome === "WIN" ? r.decimalOdds - 1 : -1;
+};
+
+/** What the AI sees of the vault: last 20 picks plus win rate and ROI. */
+export const historyContext = (records: BetRecord[]): HistoryContext => {
+  const settled = records.filter((r) => r.outcome !== "PENDING");
+  const priced = settled.map(unitsWon).filter((u): u is number => u !== null);
+  const wins = settled.filter((r) => r.outcome === "WIN").length;
+  return {
+    settled: settled.length,
+    winRate: settled.length ? wins / settled.length : null,
+    roi: priced.length ? priced.reduce((a, b) => a + b, 0) / priced.length : null,
+    recent: [...records]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 20)
+      .map((r) => ({
+        date: new Date(r.createdAt).toISOString().slice(0, 10),
+        legs: r.slip.legs.map((l) => `${l.sport}: ${l.market || l.pick}`).join(" | ").slice(0, 400),
+        verdict: r.verdict,
+        outcome: r.outcome,
+        odds: r.decimalOdds ? Math.round(r.decimalOdds * 100) / 100 : null,
+      })),
+  };
+};
 
 export const buildInsights = (records: BetRecord[]): HistoryInsights => ({
   total: records.length,
@@ -94,7 +161,7 @@ export const buildInsights = (records: BetRecord[]): HistoryInsights => ({
     losses: records.filter((r) => r.outcome === "LOSS").length,
     pending: records.filter((r) => r.outcome === "PENDING").length,
   },
-  sports: tally(records, (r) => [r.slip.sport]).map(([sport, row]) => ({ sport, ...row })),
+  sports: tally(records, sportsOf).map(([sport, row]) => ({ sport, ...row })),
   teams: tally(records, teamsOf).map(([team, row]) => ({ team, ...row })),
   byRisk: ([1, 2, 3, 4, 5] as RiskLevel[]).map((risk) => {
     const at = records.filter((r) => r.risk === risk);
@@ -107,7 +174,9 @@ export const buildInsights = (records: BetRecord[]): HistoryInsights => ({
 });
 
 /** One-line memory notes relevant to the slip being evaluated. */
-export const memoryNotes = (insights: HistoryInsights, sport: string, matchup: string) => {
+export const memoryNotes = (insights: HistoryInsights, slip: BetSlip) => {
+  const sport = slip.legs[0]?.sport ?? "";
+  const matchup = slip.legs.map((l) => l.matchup).join(" ");
   const notes: string[] = [];
   const s = insights.sports.find((row) => row.sport === sport);
   if (s && s.wins + s.losses >= 3) {

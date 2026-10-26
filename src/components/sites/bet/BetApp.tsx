@@ -3,12 +3,21 @@
 import { Brain, Calculator, Cloud, CloudOff, KeyRound, Loader2, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { evaluate, probToAmerican, RISK_PROFILES, type Evaluation } from "@/lib/bet/engine";
+import { BrandLogo } from "@/app/bet/components/BrandLogo";
+import {
+  evaluate,
+  evaluateParlay,
+  kalshiDecimal,
+  RISK_PROFILES,
+  type Evaluation,
+  type ParlayEvaluation,
+} from "@/lib/bet/engine";
 import {
   ACCESS_KEY_STORAGE,
   buildInsights,
   deleteRemote,
   fetchRemote,
+  historyContext,
   loadLocal,
   memoryNotes,
   mergeRecords,
@@ -17,55 +26,59 @@ import {
   syncErrorMessage,
   type SyncStatus,
 } from "@/lib/bet/history";
-import { SPORTS } from "@/lib/bet/parse-slip";
+import { importKalshi, outcomeOf, tickerLink } from "@/lib/bet/kalshi-link";
+import { emptyLeg } from "@/lib/bet/parse-slip";
 import { cn } from "@/lib/utils";
-import type { AiSynthesis, BetRecord, BetSlip, Outcome, RiskLevel } from "@/types/bet";
-
-import { BrandLogo } from "@/app/bet/components/BrandLogo";
+import type { BetRecord, BetSlip, Outcome, RiskLevel, SlipAnalysis } from "@/types/bet";
 
 import { BetVault } from "./BetVault";
 import { KalshiLinkImport } from "./KalshiLinkImport";
+import { LegEditor } from "./LegEditor";
+import { ParlayCard } from "./ParlayCard";
 import { PickCard } from "./PickCard";
 import { RiskSlider } from "./RiskSlider";
 import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
 
-const EMPTY_SLIP: BetSlip = {
-  sport: "NFL",
-  matchup: "",
-  marketTitle: "",
-  pick: "",
-  yesPrice: 50,
-  americanOdds: null,
-};
+const EMPTY_SLIP: BetSlip = { legs: [emptyLeg()], comboPrice: null, comboOdds: null };
 
 const pts = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}`;
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 
-const summarize = (e: Evaluation, ai: AiSynthesis | null) =>
-  ai?.reasoning ?? `${e.verdict}: ${e.reasons.join(". ")}.`;
+const slipReady = (slip: BetSlip) => slip.legs.some((l) => l.market || l.matchup || l.pick);
 
 /** Snapshot of an evaluation for the vault. Module-level so the timestamps stay out of render. */
 const toRecord = (
   base: Pick<BetRecord, "id" | "createdAt" | "outcome">,
   slip: BetSlip,
-  e: Evaluation,
-  aiRead: AiSynthesis | null,
+  ai: SlipAnalysis | null,
   risk: RiskLevel
 ): BetRecord => {
-  const side = e.side ?? (e.sides.YES.edge >= e.sides.NO.edge ? "YES" : "NO");
+  const common = { ...base, updatedAt: Date.now(), slip, risk, ai: !!ai, aiRisk: ai?.riskScore };
+  if (slip.legs.length === 1) {
+    const e = evaluate(slip.legs[0], risk, ai);
+    const side = e.side ?? (e.sides.YES.edge >= e.sides.NO.edge ? "YES" : "NO");
+    const s = e.sides[side];
+    return {
+      ...common,
+      side: e.side,
+      verdict: e.verdict === "PASS" ? "PASS" : `${e.verdict} @ ${Math.round(s.price * 100)}¢`,
+      probability: s.probability,
+      edge: s.edge,
+      decimalOdds: kalshiDecimal(Math.round(s.price * 100)),
+      summary: ai?.reasoning ?? `${e.verdict}: ${e.reasons.join(". ")}.`,
+    };
+  }
+  const p = evaluateParlay(slip, risk, ai);
+  const line = p.trimmed ?? p.full;
   return {
-    ...base,
-    updatedAt: Date.now(),
-    slip,
-    risk,
-    side: e.side,
-    verdict: e.verdict === "PASS" ? "PASS" : `${e.verdict} @ ${Math.round(e.sides[side].price * 100)}¢`,
-    probability: e.sides[side].probability,
-    edge: e.sides[side].edge,
-    summary: summarize(e, aiRead),
-    ai: !!aiRead,
-    aiRisk: aiRead?.riskRating,
+    ...common,
+    side: null,
+    verdict: p.verdict === "PLAY TRIMMED SLIP" ? `PLAY TRIMMED SLIP (${line.indexes.length}/${slip.legs.length} legs)` : p.verdict,
+    probability: line.probability,
+    edge: line.ev ?? 0,
+    decimalOdds: line.decimal ?? undefined,
+    summary: ai?.reasoning ?? p.reasons.join(". "),
   };
 };
 
@@ -73,21 +86,31 @@ const newRecordBase = () => ({ id: crypto.randomUUID(), createdAt: Date.now(), o
 
 const stampOutcome = (record: BetRecord, outcome: Outcome): BetRecord => ({ ...record, outcome, updatedAt: Date.now() });
 
-function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
-  return (
-    <label className={cn("flex flex-col gap-1.5", className)}>
-      <span className={T.label}>{label}</span>
-      {children}
-    </label>
-  );
-}
+/** A vault entry for a bet already placed on Kalshi. */
+const importedRecord = (slip: BetSlip, outcome: Outcome, paidCents: number | null): BetRecord => {
+  const price = paidCents ?? (outcome === "PENDING" ? (slip.legs.length > 1 ? slip.comboPrice : slip.legs[0].price) : null);
+  return {
+    ...newRecordBase(),
+    outcome,
+    updatedAt: Date.now(),
+    slip,
+    risk: 3,
+    side: slip.legs.length === 1 ? "YES" : null,
+    verdict: price ? `LOGGED @ ${price}¢` : "LOGGED",
+    probability: price ? price / 100 : 0,
+    edge: 0,
+    decimalOdds: price ? kalshiDecimal(price) : undefined,
+    summary: "Added from a Kalshi link.",
+    ai: false,
+    imported: true,
+  };
+};
 
 export function BetApp() {
   const [tab, setTab] = useState<"evaluate" | "vault">("evaluate");
   const [slip, setSlip] = useState<BetSlip>(EMPTY_SLIP);
-  const [oddsText, setOddsText] = useState("");
   const [risk, setRisk] = useState<RiskLevel>(3);
-  const [ai, setAi] = useState<AiSynthesis | null>(null);
+  const [ai, setAi] = useState<SlipAnalysis | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -100,10 +123,10 @@ export function BetApp() {
   /** Bumped by every new slip, so a slow research reply for an old slip is discarded. */
   const evalSeq = useRef(0);
 
-  const evaluation = evaluate(slip, risk, ai);
-  const insights = buildInsights(records);
-  const notes = memoryNotes(insights, slip.sport, slip.matchup);
-  const slipReady = slip.yesPrice >= 1 && slip.yesPrice <= 99 && (slip.matchup || slip.marketTitle);
+  const multi = slip.legs.length > 1;
+  const single: Evaluation = evaluate(slip.legs[0], risk, ai);
+  const parlay: ParlayEvaluation | null = multi ? evaluateParlay(slip, risk, ai) : null;
+  const notes = memoryNotes(buildInsights(records), slip);
 
   /** Writes records locally and, when a key is set, mirrors the changed ones to the API store. */
   const commit = useCallback(
@@ -149,8 +172,8 @@ export function BetApp() {
     return () => clearTimeout(boot);
   }, [syncRemote]);
 
-  const updateSlip = (patch: Partial<BetSlip>) => {
-    setSlip((prev) => ({ ...prev, ...patch }));
+  const editSlip = (next: BetSlip) => {
+    setSlip(next);
     // A different slip is a new evaluation; the old research no longer applies.
     evalSeq.current++;
     setRunning(false);
@@ -170,7 +193,7 @@ export function BetApp() {
     if (!accessKey) {
       if (!auto) {
         setNotice("No access key — saved with market pricing only, no research.");
-        const record = toRecord(newRecordBase(), target, evaluate(target, risk, null), null, risk);
+        const record = toRecord(newRecordBase(), target, null, risk);
         setActiveId(record.id);
         commit([record, ...recordsRef.current], [record]);
       }
@@ -178,54 +201,53 @@ export function BetApp() {
     }
 
     setRunning(true);
-    let aiRead: AiSynthesis | null = null;
+    let result: SlipAnalysis | null = null;
     let problem: string | null = null;
     try {
       const response = await fetch("/api/bet/evaluate", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-bet-key": accessKey },
-        body: JSON.stringify({ slip: target }),
+        // The server prefers the Upstash vault; this copy covers a vault that isn't connected.
+        body: JSON.stringify({ slip: target, history: historyContext(recordsRef.current) }),
       });
-      const data = (await response.json()) as AiSynthesis | { error: string };
+      const data = (await response.json()) as SlipAnalysis | { error: string };
       if ("error" in data) problem = data.error;
-      else aiRead = data;
+      else result = data;
     } catch {
       problem = "can't reach the server";
     }
     if (seq !== evalSeq.current) return;
 
     setRunning(false);
-    if (!aiRead) {
+    if (!result) {
       setNotice(`Research failed (${problem}) — tap Re-run to try again.`);
       return;
     }
-    setAi(aiRead);
-    const record = toRecord(newRecordBase(), target, evaluate(target, risk, aiRead), aiRead, risk);
+    setAi(result);
+    const failed = result.legs.filter((l) => !l.researched).length;
+    if (failed) setNotice(`Research failed for ${failed} leg${failed > 1 ? "s" : ""} — those are rated on price alone.`);
+    const record = toRecord(newRecordBase(), target, result, risk);
     setActiveId(record.id);
     commit([record, ...recordsRef.current], [record]);
   };
 
-  // Latest slip and runner for the memoized import callbacks below.
-  const latest = useRef({ slip, run: runEvaluation });
+  // Latest runner for the memoized import callbacks below.
+  const latest = useRef({ run: runEvaluation });
   useEffect(() => {
-    latest.current = { slip, run: runEvaluation };
+    latest.current = { run: runEvaluation };
   });
 
-  const onParsed = useCallback((fields: Partial<BetSlip>, raw: string) => {
-    const next = { ...latest.current.slip, ...fields };
+  const onParsed = useCallback((parsed: BetSlip, raw: string) => {
     setOcrText(raw);
-    setSlip(next);
-    setOddsText(fields.americanOdds ? `${fields.americanOdds > 0 ? "+" : ""}${fields.americanOdds}` : "");
-    const found = Object.keys(fields).filter((k) => k !== "sport").length;
-    const usable = fields.yesPrice !== undefined && !!(fields.matchup || fields.marketTitle);
+    setSlip(parsed);
+    const usable = parsed.legs.some((l) => (l.price !== null || l.americanOdds !== null) && (l.market || l.matchup));
+    const n = parsed.legs.length;
     setNotice(
       usable
-        ? `Read ${found} fields from the screenshot — researching now. Fix anything wrong and tap Re-run.`
-        : found
-          ? `Read ${found} field${found > 1 ? "s" : ""} — fill in the rest, then tap Research.`
-          : "No slip fields found — enter them manually."
+        ? `Read ${n > 1 ? `${n} legs` : "the slip"} from the screenshot — researching now. Fix anything wrong and tap Re-run.`
+        : "Couldn't read enough from the screenshot — fill in the legs, then tap Research."
     );
-    if (usable) void latest.current.run(next, true);
+    if (usable) void latest.current.run(parsed, true);
     else {
       evalSeq.current++;
       setAi(null);
@@ -233,10 +255,9 @@ export function BetApp() {
     }
   }, []);
 
-  const onImport = useCallback((fields: Partial<BetSlip>, label: string) => {
-    const next = { ...latest.current.slip, ...fields };
+  const onImport = useCallback((imported: Pick<BetSlip, "legs" | "comboPrice" | "comboTicker">, label: string) => {
+    const next: BetSlip = { ...imported, comboOdds: null };
     setSlip(next);
-    setOddsText("");
     setOcrText(null);
     setNotice(`Imported ${label} from Kalshi.`);
     void latest.current.run(next, true);
@@ -246,7 +267,7 @@ export function BetApp() {
     setRisk(next);
     const existing = recordsRef.current.find((r) => r.id === activeId);
     if (!existing) return;
-    const updated = toRecord(existing, slip, evaluate(slip, next, ai), ai, next);
+    const updated = toRecord(existing, slip, ai, next);
     commit(recordsRef.current.map((r) => (r.id === existing.id ? updated : r)), [updated]);
   };
 
@@ -263,6 +284,55 @@ export function BetApp() {
     if (id === activeId) setActiveId(null);
   };
 
+  const quickAdd = async (links: string, paidCents: number | null) => {
+    const data = await importKalshi(links);
+    if (data.legs.length === 0) {
+      throw new Error("That's a game page, not a bet — open the specific market or combo you bet and copy its link.");
+    }
+    const slipFromLink: BetSlip = {
+      legs: data.legs.map((l) => ({
+        sport: l.sport,
+        matchup: l.matchup,
+        market: l.market,
+        pick: l.pick,
+        price: l.price,
+        americanOdds: l.americanOdds,
+        ticker: l.ticker,
+        side: l.side,
+      })),
+      comboPrice: data.comboPrice,
+      comboOdds: null,
+      comboTicker: data.comboTicker ?? undefined,
+    };
+    const outcome = outcomeOf(data);
+    const record = importedRecord(slipFromLink, outcome, paidCents);
+    commit([record, ...recordsRef.current], [record]);
+    const skipped = data.choices.length ? ` (${data.choices.length} game link${data.choices.length > 1 ? "s" : ""} skipped — link the market itself)` : "";
+    return `Added ${slipFromLink.legs.length > 1 ? `${slipFromLink.legs.length}-leg slip` : slipFromLink.legs[0].pick} as ${outcome}${skipped}.`;
+  };
+
+  /** Re-checks every pending pick that has Kalshi tickers and settles the finished ones. */
+  const refreshOutcomes = async () => {
+    const pending = recordsRef.current
+      .filter((r) => r.outcome === "PENDING" && (r.slip.comboTicker || r.slip.legs.some((l) => l.ticker)))
+      .slice(0, 20);
+    const settled: BetRecord[] = [];
+    for (const r of pending) {
+      const tickers = r.slip.comboTicker ? [r.slip.comboTicker] : r.slip.legs.flatMap((l) => (l.ticker ? [l.ticker] : []));
+      try {
+        const outcome = outcomeOf(await importKalshi(tickers.map(tickerLink).join("\n")));
+        if (outcome !== "PENDING") settled.push(stampOutcome(r, outcome));
+      } catch {
+        // Leave it pending; Kalshi may be briefly unavailable.
+      }
+    }
+    if (settled.length) {
+      const byId = new Map(settled.map((r) => [r.id, r]));
+      commit(recordsRef.current.map((r) => byId.get(r.id) ?? r), settled);
+    }
+    return settled.length ? `Settled ${settled.length} pick${settled.length > 1 ? "s" : ""}.` : "Nothing new has settled yet.";
+  };
+
   const saveKey = (key: string) => {
     setAccessKey(key);
     if (key) {
@@ -274,9 +344,9 @@ export function BetApp() {
     }
   };
 
-  const verdictTone =
-    evaluation.verdict === "BUY YES" ? T.yes : evaluation.verdict === "BUY NO" ? T.no : "text-white";
-  const marketProb = slip.yesPrice / 100;
+  const leg = slip.legs[0];
+  const verdictTone = single.verdict === "BUY YES" ? T.yes : single.verdict === "BUY NO" ? T.no : "text-white";
+  const marketProb = single.marketProbability;
 
   return (
     <div className={cn("fixed inset-0 overflow-y-auto text-white antialiased", T.bg)}>
@@ -348,13 +418,22 @@ export function BetApp() {
 
       <main className="mx-auto max-w-6xl px-4 py-6">
         {tab === "vault" ? (
-          <BetVault records={records} onOutcome={setOutcome} onDelete={removeRecord} />
+          <BetVault
+            records={records}
+            onOutcome={setOutcome}
+            onDelete={removeRecord}
+            onQuickAdd={quickAdd}
+            onRefresh={refreshOutcomes}
+          />
         ) : (
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             {/* Slip input */}
             <section className="flex flex-col gap-5">
               <div className={cn(T.card, "flex flex-col gap-4 p-5")}>
-                <h2 className="font-kalshi-bold text-lg">Bet Slip</h2>
+                <div className="flex items-baseline justify-between">
+                  <h2 className="font-kalshi-bold text-lg">Bet Slip</h2>
+                  {multi && <span className={cn("text-xs", T.muted)}>{slip.legs.length}-leg parlay</span>}
+                </div>
                 <KalshiLinkImport onImport={onImport} />
                 <div className={cn("flex items-center gap-3 text-[11px] uppercase", T.muted)}>
                   <span className="h-px flex-1 bg-[#1E2638]" />
@@ -364,73 +443,8 @@ export function BetApp() {
                 <SlipReader onParsed={onParsed} />
                 {notice && <p className="text-xs text-[#F5F7F4]">{notice}</p>}
 
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Sport">
-                    <select
-                      value={slip.sport}
-                      onChange={(e) => updateSlip({ sport: e.target.value })}
-                      className={T.input}
-                    >
-                      {SPORTS.map((s) => (
-                        <option key={s}>{s}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Matchup">
-                    <input
-                      value={slip.matchup}
-                      onChange={(e) => updateSlip({ matchup: e.target.value })}
-                      placeholder="Chiefs vs Bills"
-                      className={T.input}
-                    />
-                  </Field>
-                  <Field label="Market Title" className="col-span-2">
-                    <input
-                      value={slip.marketTitle}
-                      onChange={(e) => updateSlip({ marketTitle: e.target.value })}
-                      placeholder="Who will win Chiefs vs Bills?"
-                      className={T.input}
-                    />
-                  </Field>
-                  <Field label="YES Side (Pick)">
-                    <input
-                      value={slip.pick}
-                      onChange={(e) => updateSlip({ pick: e.target.value })}
-                      placeholder="Kansas City"
-                      className={T.input}
-                    />
-                  </Field>
-                  <Field label="YES Price (¢)">
-                    <input
-                      type="number"
-                      min={1}
-                      max={99}
-                      value={slip.yesPrice}
-                      onChange={(e) => updateSlip({ yesPrice: Number(e.target.value) })}
-                      className={cn(T.input, "tabular-nums")}
-                    />
-                  </Field>
-                  <Field label="Book Odds (optional)">
-                    <input
-                      value={oddsText}
-                      onChange={(e) => {
-                        setOddsText(e.target.value);
-                        const n = Number(e.target.value.replace(/\s/g, ""));
-                        updateSlip({ americanOdds: Number.isFinite(n) && Math.abs(n) >= 100 ? n : null });
-                      }}
-                      placeholder="-150 / +130"
-                      className={cn(T.input, "tabular-nums")}
-                    />
-                  </Field>
-                  <div className="flex flex-col justify-end gap-1 pb-2 text-xs">
-                    <span className={T.muted}>
-                      Implied <span className="font-semibold text-white">{pct(marketProb)}</span> ·{" "}
-                      {probToAmerican(marketProb) > 0 ? "+" : ""}
-                      {probToAmerican(marketProb)}
-                    </span>
-                    <span className={T.muted}>NO ≈ {100 - slip.yesPrice}¢</span>
-                  </div>
-                </div>
+                <LegEditor slip={slip} onChange={editSlip} />
+
                 {ocrText && (
                   <details className="text-xs">
                     <summary className={cn("cursor-pointer", T.muted)}>Raw OCR text</summary>
@@ -441,17 +455,19 @@ export function BetApp() {
                 )}
               </div>
 
-              <PickCard slip={slip} ai={ai} evaluation={evaluation} researching={running} hasKey={!!accessKey} />
+              {!multi && (
+                <PickCard leg={leg} analysis={ai} evaluation={single} researching={running} hasKey={!!accessKey} />
+              )}
 
               <button
                 type="button"
-                disabled={!slipReady || running}
+                disabled={!slipReady(slip) || running}
                 onClick={() => void runEvaluation(slip)}
-                className="flex items-center justify-center gap-2 rounded-xl bg-[#00DD94] py-3.5 text-sm font-bold text-[#050D0A] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                className="font-kalshi-bold flex items-center justify-center gap-2 rounded-xl bg-[#00DD94] py-3.5 text-sm text-[#050D0A] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {running ? (
                   <>
-                    <Loader2 className="size-4 animate-spin" /> Researching…
+                    <Loader2 className="size-4 animate-spin" /> Researching{multi ? ` ${slip.legs.length} legs` : ""}…
                   </>
                 ) : (
                   <>
@@ -468,108 +484,120 @@ export function BetApp() {
                 <RiskSlider value={risk} onChange={changeRisk} />
               </div>
 
-              <div className={cn(T.card, "flex flex-col gap-5 p-5")}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className={T.label}>Verdict · Risk {risk} {RISK_PROFILES[risk].label}</p>
-                    <p className={cn("font-kalshi-condensed mt-1 text-5xl", verdictTone)}>{evaluation.verdict}</p>
-                    {evaluation.side && (
-                      <p className={cn("text-sm", T.muted)}>
-                        {evaluation.side === "YES" ? slip.pick || "YES" : `Against ${slip.pick || "YES"}`} @{" "}
-                        {Math.round(evaluation.sides[evaluation.side].price * 100)}¢ · stake{" "}
-                        <span className="font-semibold text-white">{(evaluation.stakePct * 100).toFixed(1)}%</span> of bankroll
+              {parlay ? (
+                <ParlayCard
+                  slip={slip}
+                  analysis={ai}
+                  parlay={parlay}
+                  risk={risk}
+                  researching={running}
+                  hasKey={!!accessKey}
+                />
+              ) : (
+                <div className={cn(T.card, "flex flex-col gap-5 p-5")}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className={T.label}>
+                        Verdict · Risk {risk} {RISK_PROFILES[risk].label}
                       </p>
-                    )}
+                      <p className={cn("font-kalshi-condensed mt-1 text-5xl", verdictTone)}>{single.verdict}</p>
+                      {single.side && (
+                        <p className={cn("text-sm", T.muted)}>
+                          {single.side === "YES" ? leg.pick || "YES" : `Against ${leg.pick || "YES"}`} @{" "}
+                          {Math.round(single.sides[single.side].price * 100)}¢ · stake{" "}
+                          <span className="font-semibold text-white">{(single.stakePct * 100).toFixed(1)}%</span> of bankroll
+                        </p>
+                      )}
+                    </div>
+                    <span
+                      className={cn(
+                        "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+                        ai ? "bg-[#014737] text-[#00DD94]" : "bg-[#1E2638] text-[#F5F7F4]/60"
+                      )}
+                    >
+                      {ai ? <Brain className="size-3" /> : <Calculator className="size-3" />}
+                      {ai ? `AI · ${ai.legs[0]?.hitConfidence ?? 0}/10` : "Market only"}
+                    </span>
                   </div>
-                  <span
-                    className={cn(
-                      "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                      ai ? "bg-[#014737] text-[#00DD94]" : "bg-[#1E2638] text-[#F5F7F4]/60"
-                    )}
-                  >
-                    {ai ? <Brain className="size-3" /> : <Calculator className="size-3" />}
-                    {ai ? `AI · ${ai.hitConfidence}/10` : "Market only"}
-                  </span>
-                </div>
 
-                {/* Market vs model probability */}
-                <div className="flex flex-col gap-2">
-                  <div className="flex justify-between text-xs">
-                    <span className={T.muted}>Market {pct(marketProb)}</span>
-                    <span className="font-semibold">Model {pct(evaluation.probability)}</span>
+                  {/* Market vs model probability */}
+                  <div className="flex flex-col gap-2">
+                    <div className="flex justify-between text-xs">
+                      <span className={T.muted}>Market {pct(marketProb)}</span>
+                      <span className="font-semibold">Model {pct(single.probability)}</span>
+                    </div>
+                    <div className="relative h-2.5 overflow-hidden rounded-full bg-[#FF3B30]/25">
+                      <div className="absolute inset-y-0 left-0 bg-[#00DD94]" style={{ width: pct(single.probability) }} />
+                      <div className="absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(marketProb) }} />
+                    </div>
+                    <div className="flex justify-between text-[11px]">
+                      <span className={T.yes}>YES {leg.pick}</span>
+                      <span className={T.no}>NO</span>
+                    </div>
                   </div>
-                  <div className="relative h-2.5 overflow-hidden rounded-full bg-[#FF3B30]/25">
-                    <div className="absolute inset-y-0 left-0 bg-[#00DD94]" style={{ width: pct(evaluation.probability) }} />
-                    <div className="absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(marketProb) }} />
-                  </div>
-                  <div className="flex justify-between text-[11px]">
-                    <span className={T.yes}>YES {slip.pick}</span>
-                    <span className={T.no}>NO</span>
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  {(["YES", "NO"] as const).map((side) => {
-                    const s = evaluation.sides[side];
-                    const positive = s.edge > 0;
-                    return (
-                      <div
-                        key={side}
-                        className={cn(
-                          T.inset,
-                          "p-3",
-                          evaluation.side === side && (side === "YES" ? "border-[#00DD94]/60" : "border-[#FF3B30]/60")
-                        )}
-                      >
-                        <div className="flex items-baseline justify-between">
-                          <span className={cn("text-sm font-bold", side === "YES" ? T.yes : T.no)}>{side}</span>
-                          <span className="text-sm tabular-nums">{Math.round(s.price * 100)}¢</span>
+                  <div className="grid grid-cols-2 gap-3">
+                    {(["YES", "NO"] as const).map((side) => {
+                      const s = single.sides[side];
+                      const positive = s.edge > 0;
+                      return (
+                        <div
+                          key={side}
+                          className={cn(
+                            T.inset,
+                            "p-3",
+                            single.side === side && (side === "YES" ? "border-[#00DD94]/60" : "border-[#FF3B30]/60")
+                          )}
+                        >
+                          <div className="flex items-baseline justify-between">
+                            <span className={cn("font-kalshi-bold text-sm", side === "YES" ? T.yes : T.no)}>{side}</span>
+                            <span className="text-sm tabular-nums">{Math.round(s.price * 100)}¢</span>
+                          </div>
+                          <dl className="mt-2 grid grid-cols-2 gap-y-1 text-xs tabular-nums">
+                            <dt className={T.muted}>Fair</dt>
+                            <dd className="text-right">{s.fairCents}¢</dd>
+                            <dt className={T.muted}>Edge</dt>
+                            <dd className={cn("text-right font-semibold", positive ? T.yes : T.no)}>{pts(s.edge)} pts</dd>
+                            <dt className={T.muted}>EV / $1</dt>
+                            <dd className={cn("text-right", positive ? T.yes : T.no)}>{pts(s.roi)}¢</dd>
+                          </dl>
                         </div>
-                        <dl className="mt-2 grid grid-cols-2 gap-y-1 text-xs tabular-nums">
-                          <dt className={T.muted}>Fair</dt>
-                          <dd className="text-right">{s.fairCents}¢</dd>
-                          <dt className={T.muted}>Edge</dt>
-                          <dd className={cn("text-right font-semibold", positive ? T.yes : T.no)}>{pts(s.edge)} pts</dd>
-                          <dt className={T.muted}>EV / $1</dt>
-                          <dd className={cn("text-right", positive ? T.yes : T.no)}>{pts(s.roi)}¢</dd>
-                        </dl>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
 
-                <ul className="flex flex-col gap-1.5 text-sm">
-                  {evaluation.reasons.map((reason) => (
-                    <li key={reason} className="flex gap-2">
-                      <span className={evaluation.side ? T.yes : T.no}>{evaluation.side ? "✓" : "✕"}</span>
-                      <span className="text-[#F5F7F4]/85">{reason}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                {ai && ai.risks.length > 0 && (
-                  <ul className="flex flex-col gap-1 text-xs">
-                    {ai.risks.map((r) => (
-                      <li key={r} className="text-[#FF3B30]/90">
-                        ▲ {r}
+                  <ul className="flex flex-col gap-1.5 text-sm">
+                    {single.reasons.map((reason) => (
+                      <li key={reason} className="flex gap-2">
+                        <span className={single.side ? T.yes : T.no}>{single.side ? "✓" : "✕"}</span>
+                        <span className="text-[#F5F7F4]/85">{reason}</span>
                       </li>
                     ))}
                   </ul>
-                )}
 
-                {notes.length > 0 && (
-                  <div className="flex flex-col gap-1 border-t border-[#1E2638] pt-4 text-xs">
-                    <p className={T.label}>From Your Vault</p>
-                    {notes.map((n) => (
-                      <p key={n} className="text-[#F5F7F4]/85">
-                        {n}
-                      </p>
-                    ))}
-                  </div>
-                )}
+                  {ai && ai.risks.length > 0 && (
+                    <ul className="flex flex-col gap-1 text-xs">
+                      {ai.risks.map((r) => (
+                        <li key={r} className="text-[#FF3B30]/90">
+                          ▲ {r}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
 
-                {activeId && <p className={cn("text-xs", T.muted)}>Saved to Bet Vault · moving the slider updates it.</p>}
-              </div>
+              {(notes.length > 0 || activeId) && (
+                <div className={cn(T.card, "flex flex-col gap-1 p-4 text-xs")}>
+                  {notes.length > 0 && <p className={T.label}>From Your Vault</p>}
+                  {notes.map((n) => (
+                    <p key={n} className="text-[#F5F7F4]/85">
+                      {n}
+                    </p>
+                  ))}
+                  {activeId && <p className={T.muted}>Saved to Bet Vault · moving the slider updates it.</p>}
+                </div>
+              )}
 
               <p className={cn("text-[11px] leading-relaxed", T.muted)}>
                 Estimates, not guarantees. Edge is measured after Kalshi&apos;s taker fee; NO price is approximated as 100 − YES.
