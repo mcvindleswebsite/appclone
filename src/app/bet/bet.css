@@ -85,16 +85,43 @@
   --accent-deep: #4a1210;
 }
 
+/*
+ * /bet scrolls as a normal page instead of a fixed full-screen box. globals.css locks
+ * html/body to a black, 100dvh, non-scrolling frame for the iPod homepage; in an iOS
+ * home-screen app with a translucent status bar that 100dvh comes up short, which left a
+ * black strip under the fixed box. While /bet is mounted, the document itself is the
+ * #050D0A page and grows with its content. (:has() keeps the iPod page untouched.)
+ */
+html:has(.bet-app),
+html:has(.bet-app) body {
+  background-color: #050d0a !important;
+  height: auto;
+  min-height: 100%;
+  width: 100%;
+}
+
+/* Only the root scrolls. A body with its own overflow would become the scroll container
+   and stop the sticky header from sticking to the screen. */
+html:has(.bet-app) {
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior: none;
+}
+
+html:has(.bet-app) body {
+  overflow: visible;
+}
+
 /* iOS home-screen app: no rubber-banding, no accidental text selection, safe areas respected. */
 .bet-app {
-  overscroll-behavior: none;
-  -webkit-overflow-scrolling: touch;
+  min-height: 100dvh;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
+  /* Content clears the home indicator; the page color fills the space behind it. */
   padding-bottom: env(safe-area-inset-bottom);
 }
 
@@ -107,6 +134,24 @@
   user-select: text;
 }
 
+/* The sticky header starts below the status bar and camera cutout; its own blurred
+   background sits under the (translucent) status bar. */
 .bet-safe-top {
   padding-top: env(safe-area-inset-top);
+}
+
+/*
+ * Added to the Home Screen: there's no Safari toolbar, the status bar overlays the page,
+ * and the home indicator sits over the bottom edge. env() covers notched iPhones; the
+ * max() floors cover older home-button iPhones, where the 20px status bar can report a
+ * zero inset in standalone mode.
+ */
+@media all and (display-mode: standalone) {
+  .bet-safe-top {
+    padding-top: max(env(safe-area-inset-top), 20px);
+  }
+
+  .bet-app {
+    padding-bottom: max(env(safe-area-inset-bottom), 12px);
+  }
 }

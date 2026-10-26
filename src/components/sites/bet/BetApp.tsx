@@ -365,7 +365,7 @@ export function BetApp() {
   return (
     <div
       data-key-broken={keyBroken || undefined}
-      className={cn("bet-accent bet-app fixed inset-0 overflow-x-hidden overflow-y-auto text-white antialiased", T.bg)}
+      className={cn("bet-accent bet-app min-h-[100dvh] w-full overflow-x-clip text-white antialiased", T.bg)}
     >
       <header className="bet-safe-top sticky top-0 z-10 border-b border-[#1E2638] bg-[#050D0A]/90 backdrop-blur">
         {/* One slim line (44px) on every screen: logo, tabs, and the key button until it's synced. */}
