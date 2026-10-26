@@ -1,5 +1,6 @@
 import { extractTickers, splitLinks } from "@/lib/bet/kalshi-link";
 import { detectSport } from "@/lib/bet/parse-slip";
+import { estimateTiming, type LegTiming } from "@/lib/bet/timing";
 import type { BetLeg, KalshiImport, KalshiMarketOption, KalshiSlipImport, LegResult } from "@/types/bet";
 
 /**
@@ -90,20 +91,54 @@ const toOption = (m: ApiMarket): KalshiMarketOption => ({
   result: resultOf(m),
 });
 
-const get = async <T,>(path: string): Promise<T | null> => {
+const get = async <T,>(path: string, retries = 1): Promise<T | null> => {
   const response = await fetch(`${API}${path}`, {
     headers: { Accept: "application/json" },
     cache: "no-store",
     signal: AbortSignal.timeout(8000),
   });
+  // Kalshi throttles bursts (a big combo fans out into many reads); back off once and retry.
+  if (response.status === 429 && retries > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return get<T>(path, retries - 1);
+  }
   return response.ok ? ((await response.json()) as T) : null;
+};
+
+/** Runs `fn` over `items` with at most `limit` in flight, keeping Kalshi under its rate limit. */
+const mapLimit = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> => {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 };
 
 /** Per-request caches so a 12-leg combo on 3 games fetches each game once. */
 const createClient = () => {
   const markets = new Map<string, Promise<ApiMarket | null>>();
   const events = new Map<string, Promise<ApiEvent | null>>();
+  const starts = new Map<string, Promise<string | null>>();
   return {
+    /** The game's real start time from Kalshi's milestones (null for non-game markets). */
+    start: (eventTicker: string) => {
+      if (!starts.has(eventTicker)) {
+        starts.set(
+          eventTicker,
+          get<{ milestones?: { start_date?: string }[] }>(
+            `/milestones?related_event_ticker=${encodeURIComponent(eventTicker)}&limit=1`
+          )
+            .then((r) => r?.milestones?.[0]?.start_date ?? null)
+            .catch(() => null)
+        );
+      }
+      return starts.get(eventTicker)!;
+    },
     market: (ticker: string) => {
       if (!markets.has(ticker)) {
         markets.set(ticker, get<{ market: ApiMarket }>(`/markets/${encodeURIComponent(ticker)}`).then((r) => r?.market ?? null));
@@ -124,9 +159,10 @@ const createClient = () => {
   };
 };
 
-const toLeg = (m: ApiMarket, event: ApiEvent | null, side: "yes" | "no"): BetLeg => {
+const toLeg = (m: ApiMarket, event: ApiEvent | null, side: "yes" | "no", start: string | null = null): BetLeg => {
   const name = m.yes_sub_title || m.title;
   const result = legResult(m, side);
+  const timing = estimateTiming(m.ticker, start, m.expected_expiration_time);
   // A settled contract's 99¢/1¢ quote isn't a price anyone bet at; drop it.
   const live = result === "PENDING";
   return {
@@ -139,6 +175,7 @@ const toLeg = (m: ApiMarket, event: ApiEvent | null, side: "yes" | "no"): BetLeg
     ticker: m.ticker,
     side,
     result,
+    ...(timing ?? {}),
   };
 };
 
@@ -166,17 +203,26 @@ export const resolveKalshiLinks = async (input: string, maxLegs: number): Promis
         if (market?.mve_selected_legs?.length) {
           const legs = await Promise.all(
             market.mve_selected_legs.slice(0, maxLegs).map(async (l) => {
-              const [m, e] = await Promise.all([kalshi.market(l.market_ticker), kalshi.event(l.event_ticker)]);
-              return m ? toLeg(m, e, l.side) : null;
+              const [m, e, start] = await Promise.all([
+                kalshi.market(l.market_ticker),
+                kalshi.event(l.event_ticker),
+                kalshi.start(l.event_ticker),
+              ]);
+              return m ? toLeg(m, e, l.side, start) : null;
             })
           );
           return { combo: market, legs: legs.filter((l): l is BetLeg => l !== null), choice: null };
         }
-        if (market) return { combo: null, legs: [toLeg(market, await kalshi.event(market.event_ticker), "yes")], choice: null };
+        if (market) {
+          const [event, start] = await Promise.all([kalshi.event(market.event_ticker), kalshi.start(market.event_ticker)]);
+          return { combo: null, legs: [toLeg(market, event, "yes", start)], choice: null };
+        }
         const event = await kalshi.event(ticker);
         if (event) {
           const live = (event.markets ?? []).filter((m) => m.status === "active" || resultOf(m));
-          if (live.length === 1) return { combo: null, legs: [toLeg(live[0], event, "yes")], choice: null };
+          if (live.length === 1) {
+            return { combo: null, legs: [toLeg(live[0], event, "yes", await kalshi.start(event.event_ticker))], choice: null };
+          }
           return { combo: null, legs: [], choice: toChoice(event) };
         }
       }
@@ -195,6 +241,42 @@ export const resolveKalshiLinks = async (input: string, maxLegs: number): Promis
     if (r.choice) out.choices.push(r.choice);
   }
   out.legs = out.legs.slice(0, maxLegs);
+  return out;
+};
+
+/**
+ * Fresh game timing for vault tickers: each market's start and estimated finish, and for a
+ * combo the span of all its legs (its finish is the last leg's). Unknown tickers are skipped.
+ */
+export const resolveTimings = async (tickers: string[]): Promise<Record<string, LegTiming>> => {
+  const kalshi = createClient();
+  const out: Record<string, LegTiming> = {};
+  const marketTiming = async (m: ApiMarket) => {
+    const timing = estimateTiming(m.ticker, await kalshi.start(m.event_ticker), m.expected_expiration_time);
+    if (timing) out[m.ticker] = timing;
+    return timing;
+  };
+  const safeMarket = (ticker: string) => kalshi.market(ticker).catch(() => null);
+
+  await mapLimit(tickers, 4, async (ticker) => {
+    const market = await safeMarket(ticker);
+    if (!market) return;
+    if (!market.mve_selected_legs?.length) {
+      await marketTiming(market);
+      return;
+    }
+    const legs = await mapLimit(market.mve_selected_legs, 4, async (l) => {
+      const m = await safeMarket(l.market_ticker);
+      return m ? marketTiming(m) : null;
+    });
+    const known = legs.filter((t): t is LegTiming => t !== null);
+    if (known.length) {
+      out[ticker] = {
+        startsAt: new Date(Math.min(...known.map((t) => Date.parse(t.startsAt)))).toISOString(),
+        endsAt: new Date(Math.max(...known.map((t) => Date.parse(t.endsAt)))).toISOString(),
+      };
+    }
+  });
   return out;
 };
 

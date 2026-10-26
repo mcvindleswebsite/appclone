@@ -1,11 +1,12 @@
 "use client";
 
-import { ChevronDown, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, Clock, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { RISK_PROFILES } from "@/lib/bet/engine";
 import { buildInsights, historyContext, legTally, slipLabel, sportsOf } from "@/lib/bet/history";
 import { DEFAULT_WAGER, formatMoney, profitSummary } from "@/lib/bet/pnl";
+import { legTiming, slipTiming, timingTickers, type LegTiming, type SlipTiming } from "@/lib/bet/timing";
 import { cn } from "@/lib/utils";
 import type { BetLeg, BetRecord, LegResult, Outcome } from "@/types/bet";
 
@@ -34,6 +35,92 @@ const OUTCOME_STYLES: Record<Outcome, string> = {
   LOSS: "bg-[#FF3B30] text-white",
   PENDING: "bg-[#1E2638] text-white",
 };
+
+/** Clock time, with the day when it isn't today. */
+const clockTime = (ms: number, now: number) => {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === new Date(now).toDateString()) return time;
+  if (d.toDateString() === new Date(now + 86_400_000).toDateString()) return `tomorrow ${time}`;
+  return `${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}, ${time}`;
+};
+
+/** "2h 15m", "45m", or "3d 4h" for far-off games. */
+const duration = (ms: number) => {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  const h = Math.floor(minutes / 60);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  return h ? `${h}h ${minutes % 60}m` : `${minutes}m`;
+};
+
+/** Live countdown, ticking by the second: 1:23:45 or 23:45. */
+const countdown = (ms: number) => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const mm = String(Math.floor((total % 3600) / 60)).padStart(h ? 2 : 1, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+};
+
+/** When a pending parlay's last game should wrap up: upcoming, a live countdown, or due. */
+function CompletionBadge({ timing, now }: { timing: SlipTiming; now: number }) {
+  const partial = timing.known < timing.total ? ` · ${timing.known}/${timing.total} legs timed` : "";
+  if (now < timing.startsAt) {
+    return (
+      <div className="rounded-xl border border-[#00DD94]/25 bg-[#050D0A] px-3 py-2 md:text-right">
+        <p className="font-kalshi-bold flex items-center gap-1.5 text-[11px] text-[#00DD94] md:justify-end">
+          <Clock className="size-3.5" /> All games finish ~{clockTime(timing.endsAt, now)}
+        </p>
+        <p className={cn("mt-0.5 text-[10px] tabular-nums", T.muted)}>
+          First game {clockTime(timing.startsAt, now)} · done in {duration(timing.endsAt - now)}
+          {partial}
+        </p>
+      </div>
+    );
+  }
+  if (now < timing.endsAt) {
+    return (
+      <div className="rounded-xl border border-[#00DD94]/40 bg-[#050D0A] px-3 py-2 md:text-right">
+        <p className="font-kalshi-bold flex items-center gap-1.5 text-[11px] text-[#00DD94] md:justify-end">
+          <span className="relative flex size-2">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-[#00DD94] opacity-75" />
+            <span className="relative inline-flex size-2 rounded-full bg-[#00DD94]" />
+          </span>
+          LIVE · Final in
+          <span className="font-kalshi-condensed text-base leading-none tabular-nums text-white">
+            {countdown(timing.endsAt - now)}
+          </span>
+        </p>
+        <p className={cn("mt-0.5 text-[10px] tabular-nums", T.muted)}>
+          Last game ends ~{clockTime(timing.endsAt, now)} · check back then
+          {partial}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-[#1E2638] bg-[#050D0A] px-3 py-2 md:text-right">
+      <p className="font-kalshi-bold flex items-center gap-1.5 text-[11px] text-[#F5F7F4]/85 md:justify-end">
+        <Clock className="size-3.5 text-[#00DD94]" /> Games should be final
+      </p>
+      <p className={cn("mt-0.5 text-[10px]", T.muted)}>Ended ~{clockTime(timing.endsAt, now)} · waiting on Kalshi to settle</p>
+    </div>
+  );
+}
+
+/** An open leg's own finish time in the expanded leg list. */
+function LegFinish({ leg, live, now }: { leg: BetLeg; live: Record<string, LegTiming>; now: number }) {
+  if (leg.result && leg.result !== "PENDING") return null;
+  const t = (leg.ticker && live[leg.ticker]) || legTiming(leg);
+  if (!t) return null;
+  const end = Date.parse(t.endsAt);
+  const playing = now >= Date.parse(t.startsAt) && now < end;
+  return (
+    <span className={cn("shrink-0 tabular-nums", playing ? "text-[#00DD94]" : "opacity-60")}>
+      {now >= end ? "final soon" : `${playing ? "live · " : ""}ends ~${clockTime(end, now)}`}
+    </span>
+  );
+}
 
 const verdictColor = (verdict: string) =>
   /^(BUY YES|PLAY)/.test(verdict) ? T.yes : verdict.startsWith("BUY NO") ? T.no : T.muted;
@@ -156,6 +243,44 @@ export function BetVault({
 
   const [lastSync, setLastSync] = useState<string | null>(null);
   const busy = useRef(false);
+
+  // Game timing for pending picks, fetched fresh from Kalshi (start times can move);
+  // timing saved on legs at import fills in until it arrives.
+  const [liveTiming, setLiveTiming] = useState<Record<string, LegTiming>>({});
+  const tickerKey = timingTickers(records).slice(0, 60).sort().join(",");
+  useEffect(() => {
+    if (!tickerKey) return;
+    let cancelled = false;
+    fetch("/api/vault/timing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tickers: tickerKey.split(",") }),
+    })
+      .then((response) => (response.ok ? (response.json() as Promise<{ timing?: Record<string, LegTiming> }>) : null))
+      .then((data) => {
+        if (!cancelled && data?.timing) setLiveTiming((prev) => ({ ...prev, ...data.timing }));
+      })
+      .catch(() => {
+        // Badges fall back to timing saved on the legs.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tickerKey]);
+
+  const [now, setNow] = useState(() => Date.now());
+  const timings = new Map(
+    records.flatMap((r) => {
+      const t = r.outcome === "PENDING" ? slipTiming(r, liveTiming) : null;
+      return t ? [[r.id, t] as const] : [];
+    })
+  );
+  const anyLive = [...timings.values()].some((t) => now >= t.startsAt && now < t.endsAt);
+  // Tick every second while a countdown is on screen, otherwise every half minute.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), anyLive ? 1000 : 30_000);
+    return () => clearInterval(timer);
+  }, [anyLive]);
 
   const refresh = useCallback(
     async (quiet = false) => {
@@ -337,6 +462,7 @@ export function BetVault({
                             <li key={i} className={cn("flex gap-2", leg.result ? LEG_RESULT_STYLES[leg.result] : "text-[#F5F7F4]/70")}>
                               <span className="w-4 shrink-0 text-center">{leg.result ? LEG_RESULT_MARK[leg.result] : `${i + 1}`}</span>
                               <span className="min-w-0 flex-1 truncate">{leg.market || leg.pick}</span>
+                              <LegFinish leg={leg} live={liveTiming} now={now} />
                               {openPrice(leg) && <span className="shrink-0 tabular-nums opacity-70">{openPrice(leg)}¢</span>}
                             </li>
                           ))}
@@ -347,7 +473,12 @@ export function BetVault({
                   <p className="mt-2 text-xs leading-relaxed text-[#F5F7F4]/85">{r.summary}</p>
                 </div>
 
-                <div className="flex shrink-0 flex-row items-center justify-between gap-3 md:flex-col md:items-end">
+                <div className="flex shrink-0 flex-row flex-wrap items-center justify-between gap-3 md:flex-col md:items-end">
+                  {timings.has(r.id) && (
+                    <div className="w-full md:w-auto">
+                      <CompletionBadge timing={timings.get(r.id)!} now={now} />
+                    </div>
+                  )}
                   <div className="text-right">
                     <p className={cn("font-kalshi-bold text-sm", verdictColor(r.verdict))}>{r.verdict}</p>
                     {r.wager ? (

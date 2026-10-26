@@ -25,6 +25,10 @@ export interface BetLeg {
   side?: "yes" | "no";
   /** Settlement, once looked up from Kalshi. */
   result?: LegResult;
+  /** ISO start of the leg's game, from Kalshi's milestones. */
+  startsAt?: string;
+  /** ISO estimate of when the leg can settle (game or period end). */
+  endsAt?: string;
 }
 
 export interface BetSlip {
