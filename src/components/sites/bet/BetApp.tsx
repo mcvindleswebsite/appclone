@@ -33,7 +33,7 @@ import { settleKalshi, settleLegs, tickerLink } from "@/lib/bet/kalshi-link";
 import { emptyLeg } from "@/lib/bet/parse-slip";
 import { DEFAULT_WAGER, formatMoney, withPnl } from "@/lib/bet/pnl";
 import { cn } from "@/lib/utils";
-import type { BetRecord, BetSlip, Outcome, RiskLevel, SlipAnalysis } from "@/types/bet";
+import type { BetRecord, BetSlip, Outcome, RiskLevel, SlipAnalysis, SoccerRecommendation } from "@/types/bet";
 
 import { BetVault } from "./BetVault";
 import { KalshiLinkImport } from "./KalshiLinkImport";
@@ -41,6 +41,7 @@ import { LegEditor } from "./LegEditor";
 import { ParlayCard } from "./ParlayCard";
 import { PickCard } from "./PickCard";
 import { RiskSlider } from "./RiskSlider";
+import { Scanner } from "./Scanner";
 import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
 
@@ -116,8 +117,28 @@ const importedRecord = (slip: BetSlip, outcome: Outcome, paidCents: number | nul
   });
 };
 
+/** A vault entry for a scanner ticket, priced from its legs' Kalshi prices. */
+const scannerRecord = (slip: BetSlip, rec: SoccerRecommendation, wager: number, risk: RiskLevel): BetRecord => {
+  const decimal = rec.legs.reduce((acc, l) => acc * kalshiDecimal(l.leg.price ?? 50), 1);
+  const probability = rec.parlay?.probability ?? rec.legs[0]?.modelProbability ?? 0;
+  return withPnl({
+    ...newRecordBase(),
+    updatedAt: Date.now(),
+    slip,
+    risk,
+    side: null,
+    verdict: `AI SCANNER PICK (${rec.legs.length} legs)`,
+    probability,
+    edge: probability * decimal - 1,
+    decimalOdds: decimal,
+    wager,
+    summary: rec.legs.map((l) => `${l.leg.pick}: ${l.reason}`).join(" "),
+    ai: true,
+  });
+};
+
 export function BetApp() {
-  const [tab, setTab] = useState<"evaluate" | "vault">("evaluate");
+  const [tab, setTab] = useState<"evaluate" | "scanner" | "vault">("evaluate");
   const [slip, setSlip] = useState<BetSlip>(EMPTY_SLIP);
   const [risk, setRisk] = useState<RiskLevel>(3);
   const [ai, setAi] = useState<SlipAnalysis | null>(null);
@@ -317,6 +338,26 @@ export function BetApp() {
   };
 
   /** Logs a bet placed on Kalshi, settled leg by leg from Kalshi's results (no AI). */
+  /** Scanner → evaluator. The legs were just researched, so research isn't re-run automatically. */
+  const importRecommendation = (rec: SoccerRecommendation) => {
+    evalSeq.current++;
+    setRunning(false);
+    setAi(null);
+    setActiveId(null);
+    setOcrText(null);
+    setSlip({ legs: rec.legs.map((l) => l.leg), comboPrice: null, comboOdds: null });
+    setNotice(`Imported ${rec.legs.length} scanner legs — tap Research & Save for the full slip review.`);
+    setTab("evaluate");
+  };
+
+  /** Scanner → vault, as one ticket at the given stake. */
+  const logRecommendation = (rec: SoccerRecommendation, wager: number) => {
+    const slipFromScan: BetSlip = { legs: rec.legs.map((l) => l.leg), comboPrice: null, comboOdds: null };
+    const record = scannerRecord(slipFromScan, rec, wager, risk);
+    commit([record, ...recordsRef.current], [record]);
+    return `Logged ${rec.legs.length}-leg ticket to the Vault at ${formatMoney(wager)}.`;
+  };
+
   const changeStake = (value: number) => {
     setStake(value);
     if (value > 0) localStorage.setItem(STAKE_STORAGE, String(value));
@@ -426,7 +467,8 @@ export function BetApp() {
             {(
               [
                 ["evaluate", "Evaluate", null],
-                ["vault", "Bet Vault", records.length || null],
+                ["scanner", "Top Picks", null],
+                ["vault", "Vault", records.length || null],
               ] as const
             ).map(([id, label, count]) => (
               <button
@@ -438,6 +480,7 @@ export function BetApp() {
                   tab === id ? "bg-white text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
                 )}
               >
+                {id === "vault" && <span className="hidden sm:inline">Bet </span>}
                 {label}
                 {count && <span className="hidden sm:inline"> · {count}</span>}
               </button>
@@ -488,7 +531,9 @@ export function BetApp() {
       </header>
 
       <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
-        {tab === "vault" ? (
+        {tab === "scanner" ? (
+          <Scanner accessKey={accessKey} keyBroken={keyBroken} onImport={importRecommendation} onLog={logRecommendation} />
+        ) : tab === "vault" ? (
           <BetVault
             records={records}
             onOutcome={setOutcome}

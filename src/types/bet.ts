@@ -193,3 +193,39 @@ export interface VaultSettlement {
   /** Game-page links skipped because they don't say which side was bet. */
   skipped: number;
 }
+
+/** One leg the soccer scanner recommends. */
+export interface RecommendedLeg {
+  leg: BetLeg;
+  league: string;
+  settlesAt: string;
+  /** Model's probability the leg wins. */
+  modelProbability: number;
+  /** What the Kalshi price implies. */
+  marketProbability: number;
+  /** Expected return per $1 at the Kalshi price, after fees. */
+  ev: number;
+  /** 1-10 confidence in the model probability. */
+  confidence: number;
+  rating: LegRating;
+  /** One-sentence tactical breakdown. */
+  reason: string;
+  opponentTier: LegAnalysis["opponentTier"];
+}
+
+/** /api/recommendations response: the best +EV soccer legs, combined into one ticket. */
+export interface SoccerRecommendation {
+  legs: RecommendedLeg[];
+  parlay: {
+    /** Treats legs as independent: they're all different matches. */
+    probability: number;
+    decimal: number;
+    american: number;
+    ev: number;
+  } | null;
+  scanned: { fixtures: number; researched: number; qualified: number };
+  generatedAt: string;
+  /** Present when fewer than 5 legs cleared the bar; the scanner never pads with -EV legs. */
+  note: string | null;
+  model: string;
+}

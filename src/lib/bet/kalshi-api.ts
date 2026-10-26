@@ -21,6 +21,8 @@ interface ApiMarket {
   no_ask_dollars?: string;
   last_price_dollars?: string;
   settlement_value_dollars?: string;
+  expected_expiration_time?: string;
+  volume_fp?: string;
   mve_selected_legs?: { event_ticker: string; market_ticker: string; side: "yes" | "no" }[];
 }
 
@@ -194,4 +196,67 @@ export const resolveKalshiLinks = async (input: string, maxLegs: number): Promis
   }
   out.legs = out.legs.slice(0, maxLegs);
   return out;
+};
+
+/* ------------------------------ Soccer scanner ----------------------------- */
+
+/** Kalshi match-winner series for the leagues the scanner covers. */
+export const SOCCER_LEAGUES = [
+  { series: "KXEPLGAME", name: "Premier League" },
+  { series: "KXLALIGAGAME", name: "La Liga" },
+  { series: "KXSERIEAGAME", name: "Serie A" },
+  { series: "KXBUNDESLIGAGAME", name: "Bundesliga" },
+  { series: "KXLIGUE1GAME", name: "Ligue 1" },
+  { series: "KXUCLGAME", name: "Champions League" },
+  { series: "KXUELGAME", name: "Europa League" },
+  { series: "KXMLSGAME", name: "MLS" },
+] as const;
+
+export interface SoccerCandidate {
+  leg: BetLeg;
+  league: string;
+  eventTicker: string;
+  /** Kalshi's expected settlement time (roughly two hours after kickoff). */
+  settlesAt: string;
+  volume: number;
+}
+
+const HOUR = 60 * 60 * 1000;
+
+/**
+ * Open match-winner markets worth researching, with no AI involved: for each upcoming
+ * match, the favorite (a team, never the draw) priced 40–85¢ — a real chance to win without
+ * being a near-certainty that pays nothing — with a live bid and a tight spread.
+ */
+export const soccerCandidates = async (): Promise<SoccerCandidate[]> => {
+  const now = Date.now();
+  const perLeague = await Promise.all(
+    SOCCER_LEAGUES.map(async ({ series, name }) => {
+      const data = await get<{ events: ApiEvent[] }>(
+        `/events?series_ticker=${series}&status=open&with_nested_markets=true&limit=100`
+      ).catch(() => null);
+      return (data?.events ?? []).flatMap((event): SoccerCandidate[] => {
+        const teams = (event.markets ?? []).filter((m) => m.status === "active" && !/^tie\b/i.test(m.yes_sub_title ?? m.title));
+        const favorite = teams.sort((a, b) => (cents(b.yes_ask_dollars) ?? 0) - (cents(a.yes_ask_dollars) ?? 0))[0];
+        if (!favorite) return [];
+        const ask = cents(favorite.yes_ask_dollars);
+        const bid = cents(favorite.yes_bid_dollars);
+        const settles = Date.parse(favorite.expected_expiration_time ?? "");
+        // Not started yet (settlement ~2h after kickoff) and within the next week.
+        if (!Number.isFinite(settles) || settles < now + 2.5 * HOUR || settles > now + 7 * 24 * HOUR) return [];
+        if (ask === null || bid === null || ask < 40 || ask > 85 || ask - bid > 3) return [];
+        const volume = Number(favorite.volume_fp ?? 0);
+        return [
+          {
+            leg: { ...toLeg(favorite, event, "yes"), sport: "Soccer" },
+            league: name,
+            eventTicker: event.event_ticker,
+            settlesAt: new Date(settles).toISOString(),
+            volume: Number.isFinite(volume) ? volume : 0,
+          },
+        ];
+      });
+    })
+  );
+  return perLeague.flat();
 };
