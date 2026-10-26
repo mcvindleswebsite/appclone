@@ -169,6 +169,24 @@ export function PickCard({
           </div>
 
           <p className={cn("text-sm", ai.rating === "BUM PICK" ? "text-[#FF3B30]" : "text-[#F5F7F4]/85")}>{ai.reason}</p>
+          {ai.opponentTier?.note && (
+            <div className={cn(T.inset, "flex flex-col gap-1.5 p-3")}>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className={T.label}>Opponent Tier</p>
+                {ai.opponentTier.trapGame && (
+                  <span className="font-kalshi-bold rounded-full border border-[#FF3B30]/50 bg-[#FF3B30]/15 px-2 py-0.5 text-[10px] text-[#FF3B30]">
+                    TRAP GAME
+                  </span>
+                )}
+                {ai.opponentTier.playUpSpot && (
+                  <span className="font-kalshi-bold rounded-full border border-(--accent)/50 bg-(--accent-deep) px-2 py-0.5 text-[10px] text-(--accent)">
+                    PLAY-UP SPOT
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-[#F5F7F4]/85">{ai.opponentTier.note}</p>
+            </div>
+          )}
           <p className="text-sm leading-relaxed text-[#F5F7F4]/85">{ai.reasoning}</p>
         </>
       )}

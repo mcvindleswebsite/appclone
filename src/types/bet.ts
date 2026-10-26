@@ -55,6 +55,14 @@ export interface LegAnalysis {
   /** Opposing defense rank vs this stat; 1 = toughest matchup. */
   matchup: { rank: number; outOf: number; label: string };
   injuries: InjuryFactor[];
+  /** How the team does against opponents of today's tier and playstyle. */
+  opponentTier: {
+    note: string;
+    /** Favorite with a proven record of underperforming against this kind of lower-tier side. */
+    trapGame: boolean;
+    /** Underdog that systematically raises its level against top-tier opposition. */
+    playUpSpot: boolean;
+  };
   /** False when research for this leg failed; the other fields are placeholders. */
   researched: boolean;
 }

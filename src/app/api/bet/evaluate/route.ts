@@ -38,15 +38,24 @@ const LEG_SYSTEM = `You are a sharp, calibrated sports analyst rating ONE leg of
 1. Recent 10-game trend and line hit rate. For a player prop, count how many of the player's last 10 games cleared this exact line. For a team market, count how many of the last 10 would have hit (wins for a moneyline, covers for a spread, overs for a total).
 2. Matchup and strength of schedule. Rank the opposing defense against this stat or team (1 = the toughest matchup in the league).
 3. Injuries and usage shifts: absences, minutes or role changes, and whether each helps or hurts this leg.
+4. Opponent tier and playstyle. A team's overall record hides how it does against different kinds of opponent, so split it:
+   a) Against top-tier or aggressive sides (title contenders, high-pressing or high-line teams — in soccer, sides like Man City or Chelsea): does this team lock in and raise its level, or get overrun?
+   b) Against low-block, bottom-table, or otherwise lower-tier sides: does it keep winning comfortably, or does it have a history of dropping points and failing to break down deep, compact opponents?
+   Use results from this season and last against opponents of the same tier and style as today's. Classify today's opponent's tier and playstyle, then report this team's record in that bucket (e.g. "W2 D3 L1 vs bottom-six low blocks this season, 1.1 xG per game").
+
+Flag the spots this exposes:
+- trapGame: this leg BACKS a favorite (to win, cover, or score heavily) that has a proven record of underperforming against opponents like today's lower-tier one — repeated dropped points, narrow escapes, or failing to cover against weaker, deep-sitting sides — even though its overall record looks strong on paper. Base it on a real pattern across several games, not one result. If the leg instead fades that favorite (backs the underdog, the draw, or the under), trapGame stays false: mention the pattern in the note, because it supports the leg.
+- playUpSpot: this leg backs an underdog that systematically elevates its level against top-tier opposition (e.g. strong results against the top four) — a high-value underdog spot.
+Leave both false when the evidence isn't there, and for props or sports where opponent tier doesn't apply.
 
 Estimate the true probability the leg hits. The market price, when given, is a strong prior; move off it only as far as the evidence justifies.
 
 Rate the leg:
 - STRONG VALUE: your probability is clearly above what the price implies, and the trend, matchup, and usage all support it.
 - NEUTRAL: roughly fairly priced, or mixed evidence.
-- BUM PICK: likely to miss or clearly overpriced — a poor 10-game hit rate, a bad defensive matchup, a usage reduction, or similar.
+- BUM PICK: likely to miss or clearly overpriced — a poor 10-game hit rate, a bad defensive matchup, a usage reduction, or similar. A leg backing a favorite in a trap game is always a BUM PICK: a proven record of struggling against this kind of lower-tier opponent outweighs a strong overall record.
 
-reason is one sentence. For a BUM PICK it must name the specific reason (e.g. "Cleared 24.5 in only 3 of his last 10 and faces the league's #2 defense vs PGs.").
+reason is one sentence. For a BUM PICK it must name the specific reason (e.g. "Cleared 24.5 in only 3 of his last 10 and faces the league's #2 defense vs PGs." or "Trap game: won only 2 of 7 against bottom-half low blocks this season despite sitting 2nd.").
 
 When done, call submit_leg exactly once.`;
 
@@ -93,8 +102,27 @@ const SUBMIT_LEG: Anthropic.Beta.BetaTool = {
           additionalProperties: false,
         },
       },
+      opponentTier: {
+        type: "object",
+        properties: {
+          note: {
+            type: "string",
+            description: "Today's opponent tier and style, and this team's record against that bucket. Empty if not applicable.",
+          },
+          trapGame: {
+            type: "boolean",
+            description: "The leg backs a favorite with a proven record of underperforming vs this lower tier.",
+          },
+          playUpSpot: {
+            type: "boolean",
+            description: "The leg backs an underdog that systematically elevates vs top-tier opponents.",
+          },
+        },
+        required: ["note", "trapGame", "playUpSpot"],
+        additionalProperties: false,
+      },
     },
-    required: ["rating", "probability", "hitConfidence", "reason", "last10", "matchup", "injuries"],
+    required: ["rating", "probability", "hitConfidence", "reason", "last10", "matchup", "injuries", "opponentTier"],
     additionalProperties: false,
   },
 };
@@ -104,6 +132,7 @@ const SUBMIT_LEG: Anthropic.Beta.BetaTool = {
 const SLIP_SYSTEM = `You are a sharp, calibrated sports analyst reviewing a whole bet slip. Each leg has already been researched; you get those findings. Your job is the slip as a whole:
 
 - Flag correlations between legs, especially same-game parlay legs that work against each other (negative: e.g. a QB passing over with his RB rushing over, or both teams' unders with a game over). Positive correlations matter too, because they raise the true joint probability.
+- Weigh the per-leg opponent-tier findings: a trap-game favorite drags the whole slip down, and a play-up underdog spot can be the best value on it.
 - Estimate the true probability that EVERY leg hits, accounting for those correlations — not just the product of the leg probabilities.
 - riskScore 1-5 is the slip's variance: 1 is stable and high-floor, 5 depends on many swingy outcomes.
 - reasoning is exactly two sentences: the case, then the main risk.
@@ -252,6 +281,7 @@ const placeholder = (leg: BetLeg): LegAnalysis => ({
   last10: { hits: 0, games: 0, detail: "No data" },
   matchup: { rank: 0, outOf: 0, label: "No data" },
   injuries: [],
+  opponentTier: { note: "", trapGame: false, playUpSpot: false },
   researched: false,
 });
 
@@ -265,13 +295,15 @@ const researchLeg = async (leg: BetLeg): Promise<LegAnalysis> => {
     const games = int(raw.last10.games, 0, 20);
     const outOf = int(raw.matchup.outOf, 1, 64);
     return {
-      rating: raw.rating,
+      // A favorite in a proven trap game is a bum pick however good its overall record.
+      rating: raw.opponentTier.trapGame ? "BUM PICK" : raw.rating,
       probability: clamp(raw.probability, 0.01, 0.99),
       hitConfidence: int(raw.hitConfidence, 1, 10),
       reason: raw.reason,
       last10: { ...raw.last10, games, hits: int(raw.last10.hits, 0, games) },
       matchup: { ...raw.matchup, outOf, rank: int(raw.matchup.rank, 1, outOf) },
       injuries: raw.injuries.slice(0, 5),
+      opponentTier: raw.opponentTier,
       researched: true,
     };
   } catch {
@@ -340,7 +372,7 @@ export async function POST(request: Request) {
     const findings = slip.legs
       .map((leg, i) => {
         const a = legs[i];
-        return `${describeLeg(leg, i + 1)}\nFinding: ${a.rating}, ${Math.round(a.probability * 100)}% to hit (confidence ${a.hitConfidence}/10). ${a.reason} Last 10: ${a.last10.hits}/${a.last10.games}. Matchup: ${a.matchup.label}.${a.injuries.length ? ` Injuries: ${a.injuries.map((x) => `${x.note} (${x.effect})`).join("; ")}.` : ""}`;
+        return `${describeLeg(leg, i + 1)}\nFinding: ${a.rating}, ${Math.round(a.probability * 100)}% to hit (confidence ${a.hitConfidence}/10). ${a.reason} Last 10: ${a.last10.hits}/${a.last10.games}. Matchup: ${a.matchup.label}.${a.opponentTier.note ? ` Opponent tier: ${a.opponentTier.note}.` : ""}${a.opponentTier.trapGame ? " TRAP GAME." : ""}${a.opponentTier.playUpSpot ? " Play-up underdog spot." : ""}${a.injuries.length ? ` Injuries: ${a.injuries.map((x) => `${x.note} (${x.effect})`).join("; ")}.` : ""}`;
       })
       .join("\n\n");
     const price = slip.comboPrice ? `Combo price: ${slip.comboPrice}¢` : slip.comboOdds ? `Parlay odds: ${slip.comboOdds}` : "No combo price.";

@@ -181,11 +181,14 @@ export function ParlayCard({
                     </>
                   )}
                   {l.ev !== null && <span className={cn("tabular-nums", l.ev >= 0 ? T.yes : T.no)}>EV {signedPct(l.ev)}</span>}
+                  {a.opponentTier?.trapGame && <span className="font-kalshi-bold text-[#FF3B30]">Trap game</span>}
+                  {a.opponentTier?.playUpSpot && <span className="font-kalshi-bold text-(--accent)">Play-up spot</span>}
                   {l.conflicted && <span className="text-[#FF3B30]">Conflicts</span>}
                   {kept && <span className={T.yes}>✓ Kept</span>}
                 </div>
               )}
               {a && <p className={cn("pl-7 text-xs", a.rating === "BUM PICK" ? "text-[#FF3B30]" : "text-[#F5F7F4]/70")}>{a.reason}</p>}
+              {a?.opponentTier?.note && <p className="pl-7 text-[11px] text-[#F5F7F4]/50">vs tier: {a.opponentTier.note}</p>}
             </li>
           );
         })}
