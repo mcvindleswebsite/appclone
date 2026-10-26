@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 import { checkAccess } from "@/lib/bet/access";
-import type { AiSynthesis, BetSlip, ContextFactors, HistoryInsights, InjuryImpact } from "@/types/bet";
+import { kalshiFee } from "@/lib/bet/engine";
+import type { AiSynthesis, BetSlip, InjuryFactor, RiskLevel } from "@/types/bet";
 
 export const dynamic = "force-dynamic";
 // Web research plus reasoning can take a while; well under Vercel's limit.
@@ -10,17 +11,21 @@ export const maxDuration = 120;
 const MODEL = "claude-opus-5-5";
 const MAX_TURNS = 4;
 
-const SYSTEM = `You are a sharp, calibrated sports analyst evaluating a single Kalshi event contract.
+const SYSTEM = `You are a sharp, calibrated sports analyst evaluating a single Kalshi event contract. You get only the bet itself: who the YES side is on (a team or a player), the market or stat line, and the price. Research everything else yourself with web search, preferring sources from the last few days.
 
-Research with web search before answering: each side's last 10 games, strength of schedule, the latest injury report (who is out or questionable, and how much they matter), and rest/travel (back-to-backs, short weeks, days since last game). Prefer sources from the last few days and note when information is stale.
+Work out three things:
 
-Then estimate the true probability that the YES side of the contract resolves. Be calibrated: the market price is a strong prior, so move off it only as far as the evidence justifies. Never inflate a pick to make it look playable.
+1. Recent 10-game trend and line hit rate. For a player prop, count how many of the player's last 10 games cleared this exact line, and note the trend (minutes, role, averages). For a team market, count how many of the last 10 games would have hit (wins for a moneyline, covers for a spread, overs for a total).
+2. Matchup and strength of schedule. Rank the opposing defense against this stat or team (1 = the toughest matchup in the league), and judge whether either side's recent results are inflated or deflated by the schedule.
+3. Injuries and usage shifts. List the injuries, absences, and role or minutes changes that move this bet, and whether each one helps or hurts the YES side.
 
-Fill the factor fields from your research: form as wins in the last 10 games; sosEdge from -5 (the pick faced a much tougher schedule than the opponent) to +5 (the opponent did); injuries 0 none, 1 minor, 2 a key starter out, 3 a star out or several starters; restDiff as the pick's rest days minus the opponent's.
+Then estimate the true probability that YES resolves. The market price is a strong prior; move off it only as far as the evidence justifies, and never inflate a pick to make it look playable.
 
-pathsToVictory lists concrete, evidence-backed reasons YES can win; risks lists concrete reasons it can lose. Leave either list short rather than padding it.
+Also rate:
+- hitConfidence, 1-10: how sure you are of your probability estimate (data quality, consistency, how settled the injury news is).
+- riskRating, 1-5: the bet's variance. 1 is a high-floor, stable outcome; 5 is volatile and depends on a few swingy events.
 
-The user's betting history is provided only so you can mention relevant tendencies (for example, a losing record on a team or sport) in the summary. Do not shift the probability because of the user's preferences.
+reasoning must be exactly two sentences: the core case, then the main risk. pathsToVictory lists concrete, evidence-backed ways YES hits; risks lists concrete ways it misses. Keep both lists short rather than padding them.
 
 When done, call submit_evaluation exactly once.`;
 
@@ -32,74 +37,109 @@ const SUBMIT_TOOL: Anthropic.Beta.BetaTool = {
     type: "object",
     properties: {
       probability: { type: "number", description: "Probability (0-1) that YES resolves." },
-      confidence: { type: "string", enum: ["low", "medium", "high"] },
-      summary: { type: "string", description: "2-4 sentences: the read, the key evidence, and any history tendency." },
-      pathsToVictory: { type: "array", items: { type: "string" } },
-      risks: { type: "array", items: { type: "string" } },
-      factors: {
+      hitConfidence: { type: "integer", description: "1-10 confidence in the probability estimate." },
+      riskRating: { type: "integer", enum: [1, 2, 3, 4, 5] },
+      reasoning: { type: "string", description: "Exactly two sentences: the case, then the main risk." },
+      last10: {
         type: "object",
         properties: {
-          pickForm: { type: "integer" },
-          oppForm: { type: "integer" },
-          sosEdge: { type: "integer" },
-          pickInjuries: { type: "integer", enum: [0, 1, 2, 3] },
-          oppInjuries: { type: "integer", enum: [0, 1, 2, 3] },
-          restDiff: { type: "integer" },
+          hits: { type: "integer", description: "Games of the last `games` that hit this line." },
+          games: { type: "integer", description: "Games counted, normally 10." },
+          detail: { type: "string", description: "Short trend note, e.g. 'Avg 27.1 pts, 36 min'." },
         },
-        required: ["pickForm", "oppForm", "sosEdge", "pickInjuries", "oppInjuries", "restDiff"],
+        required: ["hits", "games", "detail"],
         additionalProperties: false,
       },
+      matchup: {
+        type: "object",
+        properties: {
+          rank: { type: "integer", description: "Opposing defense rank vs this stat; 1 = toughest matchup." },
+          outOf: { type: "integer", description: "Teams in the league." },
+          label: { type: "string", description: "Short context, e.g. '28th vs PGs, soft schedule'." },
+        },
+        required: ["rank", "outOf", "label"],
+        additionalProperties: false,
+      },
+      injuries: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            note: { type: "string", description: "e.g. 'Embiid OUT (knee)' or 'Usage up 4% since trade'." },
+            effect: { type: "string", enum: ["helps", "hurts", "neutral"] },
+          },
+          required: ["note", "effect"],
+          additionalProperties: false,
+        },
+      },
+      pathsToVictory: { type: "array", items: { type: "string" } },
+      risks: { type: "array", items: { type: "string" } },
     },
-    required: ["probability", "confidence", "summary", "pathsToVictory", "risks", "factors"],
+    required: [
+      "probability",
+      "hitConfidence",
+      "riskRating",
+      "reasoning",
+      "last10",
+      "matchup",
+      "injuries",
+      "pathsToVictory",
+      "risks",
+    ],
     additionalProperties: false,
   },
 };
 
-type Submission = Omit<AiSynthesis, "model">;
+type Submission = Omit<AiSynthesis, "model" | "evPercent">;
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, Number.isFinite(n) ? n : min));
+const int = (n: number, min: number, max: number) => clamp(Math.round(n), min, max);
 
 const sanitize = (raw: Submission): Submission => {
-  const f = raw.factors;
-  const injury = (n: number) => clamp(Math.round(n), 0, 3) as InjuryImpact;
-  const factors: ContextFactors = {
-    pickForm: clamp(Math.round(f.pickForm), 0, 10),
-    oppForm: clamp(Math.round(f.oppForm), 0, 10),
-    sosEdge: clamp(Math.round(f.sosEdge), -5, 5),
-    pickInjuries: injury(f.pickInjuries),
-    oppInjuries: injury(f.oppInjuries),
-    restDiff: clamp(Math.round(f.restDiff), -7, 7),
-  };
+  const games = int(raw.last10.games, 0, 20);
+  const outOf = int(raw.matchup.outOf, 1, 64);
   return {
     ...raw,
     probability: clamp(raw.probability, 0.01, 0.99),
+    hitConfidence: int(raw.hitConfidence, 1, 10),
+    riskRating: int(raw.riskRating, 1, 5) as RiskLevel,
+    last10: { ...raw.last10, games, hits: int(raw.last10.hits, 0, games) },
+    matchup: { ...raw.matchup, outOf, rank: int(raw.matchup.rank, 1, outOf) },
+    injuries: raw.injuries.slice(0, 6) as InjuryFactor[],
     pathsToVictory: raw.pathsToVictory.slice(0, 5),
     risks: raw.risks.slice(0, 5),
-    factors,
   };
 };
 
-const describe = (slip: BetSlip, factors: ContextFactors, insights: HistoryInsights | null) => {
-  const lines = [
+/** EV of buying YES at the slip price, after Kalshi's fee, as a % of the stake. Computed, not model-reported. */
+const yesEvPercent = (probability: number, yesPrice: number) => {
+  const price = yesPrice / 100;
+  const fee = kalshiFee(price);
+  return ((probability - price - fee) / (price + fee)) * 100;
+};
+
+const describe = (slip: BetSlip) =>
+  [
     `Sport: ${slip.sport}`,
-    `Matchup: ${slip.matchup}`,
-    `Market: ${slip.marketTitle}`,
-    `YES side is on: ${slip.pick}`,
+    slip.matchup && `Matchup: ${slip.matchup}`,
+    `Market / stat line: ${slip.marketTitle || slip.matchup}`,
+    `YES side is on: ${slip.pick || "(see market)"}`,
     `Kalshi YES price: ${slip.yesPrice}¢ (NO ≈ ${100 - slip.yesPrice}¢)`,
     slip.americanOdds ? `Sportsbook odds for the pick: ${slip.americanOdds > 0 ? "+" : ""}${slip.americanOdds}` : null,
     `Today's date: ${new Date().toDateString()}`,
-    `User's own factor estimates (may be rough): ${JSON.stringify(factors)}`,
-  ];
-  if (insights && insights.total > 0) {
-    const fmt = (rows: { label: string; count: number; wins: number; losses: number }[]) =>
-      rows.slice(0, 5).map((r) => `${r.label} ${r.wins}-${r.losses} (${r.count} picks)`).join("; ");
-    lines.push(
-      `User history: ${insights.total} picks, ${insights.record.wins}-${insights.record.losses} settled.`,
-      `By sport: ${fmt(insights.sports.map((r) => ({ ...r, label: r.sport })))}`,
-      `Most-picked teams: ${fmt(insights.teams.map((r) => ({ ...r, label: r.team })))}`
-    );
-  }
-  return lines.filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+const isSlip = (value: unknown): value is BetSlip => {
+  if (!value || typeof value !== "object") return false;
+  const s = value as Partial<BetSlip>;
+  return (
+    typeof s.yesPrice === "number" &&
+    s.yesPrice >= 1 &&
+    s.yesPrice <= 99 &&
+    [s.sport, s.matchup, s.marketTitle, s.pick].every((f) => typeof f === "string" && f.length <= 300)
+  );
 };
 
 export async function POST(request: Request) {
@@ -107,19 +147,12 @@ export async function POST(request: Request) {
   if (denied) return denied;
   if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: "AI not configured" }, { status: 503 });
 
-  const body = (await request.json().catch(() => null)) as {
-    slip?: BetSlip;
-    factors?: ContextFactors;
-    insights?: HistoryInsights | null;
-  } | null;
-  if (!body?.slip || !body.factors || JSON.stringify(body).length > 20_000) {
-    return Response.json({ error: "Invalid request" }, { status: 400 });
-  }
+  const body = (await request.json().catch(() => null)) as { slip?: unknown } | null;
+  if (!isSlip(body?.slip)) return Response.json({ error: "Invalid bet details" }, { status: 400 });
+  const slip = body.slip;
 
   const client = new Anthropic();
-  const messages: Anthropic.Beta.BetaMessageParam[] = [
-    { role: "user", content: describe(body.slip, body.factors, body.insights ?? null) },
-  ];
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: describe(slip) }];
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -130,7 +163,7 @@ export async function POST(request: Request) {
         fallbacks: "default",
         output_config: { effort: "medium" },
         system: SYSTEM,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 6 }, SUBMIT_TOOL],
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }, SUBMIT_TOOL],
         messages,
       });
 
@@ -142,7 +175,12 @@ export async function POST(request: Request) {
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use" && b.name === SUBMIT_TOOL.name
       );
       if (submission) {
-        const result: AiSynthesis = { ...sanitize(submission.input as Submission), model: response.model };
+        const clean = sanitize(submission.input as Submission);
+        const result: AiSynthesis = {
+          ...clean,
+          evPercent: Math.round(yesEvPercent(clean.probability, slip.yesPrice) * 10) / 10,
+          model: response.model,
+        };
         return Response.json(result);
       }
 

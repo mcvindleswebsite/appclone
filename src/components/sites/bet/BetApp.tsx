@@ -3,7 +3,7 @@
 import { Brain, Calculator, Cloud, CloudOff, KeyRound, Loader2, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { DEFAULT_FACTORS, evaluate, probToAmerican, RISK_PROFILES, type Evaluation } from "@/lib/bet/engine";
+import { evaluate, probToAmerican, RISK_PROFILES, type Evaluation } from "@/lib/bet/engine";
 import {
   ACCESS_KEY_STORAGE,
   buildInsights,
@@ -19,12 +19,13 @@ import {
 } from "@/lib/bet/history";
 import { SPORTS } from "@/lib/bet/parse-slip";
 import { cn } from "@/lib/utils";
-import type { AiSynthesis, BetRecord, BetSlip, ContextFactors, InjuryImpact, Outcome, RiskLevel } from "@/types/bet";
+import type { AiSynthesis, BetRecord, BetSlip, Outcome, RiskLevel } from "@/types/bet";
 
 import { BrandLogo } from "@/app/bet/components/BrandLogo";
 
 import { BetVault } from "./BetVault";
 import { KalshiLinkImport } from "./KalshiLinkImport";
+import { PickCard } from "./PickCard";
 import { RiskSlider } from "./RiskSlider";
 import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
@@ -38,13 +39,11 @@ const EMPTY_SLIP: BetSlip = {
   americanOdds: null,
 };
 
-const INJURY_LABELS = ["None", "Minor", "Starter out", "Star out"];
-
 const pts = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}`;
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 
 const summarize = (e: Evaluation, ai: AiSynthesis | null) =>
-  ai?.summary ?? `${e.verdict}: ${e.reasons.join(". ")}.`;
+  ai?.reasoning ?? `${e.verdict}: ${e.reasons.join(". ")}.`;
 
 /** Snapshot of an evaluation for the vault. Module-level so the timestamps stay out of render. */
 const toRecord = (
@@ -52,7 +51,6 @@ const toRecord = (
   slip: BetSlip,
   e: Evaluation,
   aiRead: AiSynthesis | null,
-  factors: ContextFactors,
   risk: RiskLevel
 ): BetRecord => {
   const side = e.side ?? (e.sides.YES.edge >= e.sides.NO.edge ? "YES" : "NO");
@@ -60,7 +58,6 @@ const toRecord = (
     ...base,
     updatedAt: Date.now(),
     slip,
-    factors,
     risk,
     side: e.side,
     verdict: e.verdict === "PASS" ? "PASS" : `${e.verdict} @ ${Math.round(e.sides[side].price * 100)}¢`,
@@ -68,6 +65,7 @@ const toRecord = (
     edge: e.sides[side].edge,
     summary: summarize(e, aiRead),
     ai: !!aiRead,
+    aiRisk: aiRead?.riskRating,
   };
 };
 
@@ -84,50 +82,10 @@ function Field({ label, children, className }: { label: string; children: React.
   );
 }
 
-function Stepper({
-  label,
-  value,
-  min,
-  max,
-  onChange,
-  format = String,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  onChange: (n: number) => void;
-  format?: (n: number) => string;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className={T.label}>{label}</span>
-      <div className="flex items-center justify-between rounded-lg border border-[#1E2638] bg-[#050D0A]">
-        <button
-          type="button"
-          onClick={() => onChange(Math.max(min, value - 1))}
-          className="px-3 py-2 text-[#F5F7F4]/60 hover:text-white"
-        >
-          −
-        </button>
-        <span className="text-sm font-semibold tabular-nums">{format(value)}</span>
-        <button
-          type="button"
-          onClick={() => onChange(Math.min(max, value + 1))}
-          className="px-3 py-2 text-[#F5F7F4]/60 hover:text-white"
-        >
-          +
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export function BetApp() {
   const [tab, setTab] = useState<"evaluate" | "vault">("evaluate");
   const [slip, setSlip] = useState<BetSlip>(EMPTY_SLIP);
   const [oddsText, setOddsText] = useState("");
-  const [factors, setFactors] = useState<ContextFactors>(DEFAULT_FACTORS);
   const [risk, setRisk] = useState<RiskLevel>(3);
   const [ai, setAi] = useState<AiSynthesis | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -139,8 +97,10 @@ export function BetApp() {
   const [sync, setSync] = useState<SyncStatus>("local");
   const [ocrText, setOcrText] = useState<string | null>(null);
   const recordsRef = useRef<BetRecord[]>([]);
+  /** Bumped by every new slip, so a slow research reply for an old slip is discarded. */
+  const evalSeq = useRef(0);
 
-  const evaluation = evaluate(slip, factors, risk, ai);
+  const evaluation = evaluate(slip, risk, ai);
   const insights = buildInsights(records);
   const notes = memoryNotes(insights, slip.sport, slip.matchup);
   const slipReady = slip.yesPrice >= 1 && slip.yesPrice <= 99 && (slip.matchup || slip.marketTitle);
@@ -191,73 +151,102 @@ export function BetApp() {
 
   const updateSlip = (patch: Partial<BetSlip>) => {
     setSlip((prev) => ({ ...prev, ...patch }));
-    // A different slip is a new evaluation; the old AI read no longer applies.
+    // A different slip is a new evaluation; the old research no longer applies.
+    evalSeq.current++;
+    setRunning(false);
     setAi(null);
     setActiveId(null);
     setNotice(null);
   };
 
-  const onParsed = useCallback((fields: Partial<BetSlip>, raw: string) => {
-    setOcrText(raw);
-    setSlip((prev) => ({ ...prev, ...fields }));
-    setOddsText(fields.americanOdds ? `${fields.americanOdds > 0 ? "+" : ""}${fields.americanOdds}` : "");
+  /**
+   * Researches the slip with the AI route, then saves it to the vault. `auto` runs come
+   * from a link import or OCR scan and only fire when the AI is available.
+   */
+  const runEvaluation = async (target: BetSlip, auto = false) => {
+    const seq = ++evalSeq.current;
     setAi(null);
     setActiveId(null);
+    if (!accessKey) {
+      if (!auto) {
+        setNotice("No access key — saved with market pricing only, no research.");
+        const record = toRecord(newRecordBase(), target, evaluate(target, risk, null), null, risk);
+        setActiveId(record.id);
+        commit([record, ...recordsRef.current], [record]);
+      }
+      return;
+    }
+
+    setRunning(true);
+    let aiRead: AiSynthesis | null = null;
+    let problem: string | null = null;
+    try {
+      const response = await fetch("/api/bet/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bet-key": accessKey },
+        body: JSON.stringify({ slip: target }),
+      });
+      const data = (await response.json()) as AiSynthesis | { error: string };
+      if ("error" in data) problem = data.error;
+      else aiRead = data;
+    } catch {
+      problem = "can't reach the server";
+    }
+    if (seq !== evalSeq.current) return;
+
+    setRunning(false);
+    if (!aiRead) {
+      setNotice(`Research failed (${problem}) — tap Re-run to try again.`);
+      return;
+    }
+    setAi(aiRead);
+    const record = toRecord(newRecordBase(), target, evaluate(target, risk, aiRead), aiRead, risk);
+    setActiveId(record.id);
+    commit([record, ...recordsRef.current], [record]);
+  };
+
+  // Latest slip and runner for the memoized import callbacks below.
+  const latest = useRef({ slip, run: runEvaluation });
+  useEffect(() => {
+    latest.current = { slip, run: runEvaluation };
+  });
+
+  const onParsed = useCallback((fields: Partial<BetSlip>, raw: string) => {
+    const next = { ...latest.current.slip, ...fields };
+    setOcrText(raw);
+    setSlip(next);
+    setOddsText(fields.americanOdds ? `${fields.americanOdds > 0 ? "+" : ""}${fields.americanOdds}` : "");
     const found = Object.keys(fields).filter((k) => k !== "sport").length;
-    setNotice(found ? `Read ${found} field${found > 1 ? "s" : ""} from the screenshot — verify below.` : "No slip fields found — enter them manually.");
+    const usable = fields.yesPrice !== undefined && !!(fields.matchup || fields.marketTitle);
+    setNotice(
+      usable
+        ? `Read ${found} fields from the screenshot — researching now. Fix anything wrong and tap Re-run.`
+        : found
+          ? `Read ${found} field${found > 1 ? "s" : ""} — fill in the rest, then tap Research.`
+          : "No slip fields found — enter them manually."
+    );
+    if (usable) void latest.current.run(next, true);
+    else {
+      evalSeq.current++;
+      setAi(null);
+      setActiveId(null);
+    }
   }, []);
 
   const onImport = useCallback((fields: Partial<BetSlip>, label: string) => {
-    setSlip((prev) => ({ ...prev, ...fields }));
+    const next = { ...latest.current.slip, ...fields };
+    setSlip(next);
     setOddsText("");
     setOcrText(null);
-    setAi(null);
-    setActiveId(null);
-    setNotice(`Imported ${label} from Kalshi — verify below.`);
+    setNotice(`Imported ${label} from Kalshi.`);
+    void latest.current.run(next, true);
   }, []);
-
-  const setFactor = <K extends keyof ContextFactors>(key: K, value: ContextFactors[K]) =>
-    setFactors((prev) => ({ ...prev, [key]: value }));
-
-  const runEvaluation = async () => {
-    setRunning(true);
-    setNotice(null);
-    let aiRead: AiSynthesis | null = null;
-    let f = factors;
-    if (accessKey) {
-      try {
-        const response = await fetch("/api/bet/evaluate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-bet-key": accessKey },
-          body: JSON.stringify({ slip, factors, insights }),
-        });
-        const data = (await response.json()) as AiSynthesis | { error: string };
-        if ("error" in data) setNotice(`AI synthesis unavailable (${data.error}) — math engine only.`);
-        else {
-          aiRead = data;
-          f = data.factors;
-        }
-      } catch {
-        setNotice("AI synthesis unreachable — math engine only.");
-      }
-    } else {
-      setNotice("Math engine only — add an access key to enable AI research.");
-    }
-
-    setAi(aiRead);
-    setFactors(f);
-    const e = evaluate(slip, f, risk, aiRead);
-    const record = toRecord(newRecordBase(), slip, e, aiRead, f, risk);
-    setActiveId(record.id);
-    commit([record, ...recordsRef.current], [record]);
-    setRunning(false);
-  };
 
   const changeRisk = (next: RiskLevel) => {
     setRisk(next);
     const existing = recordsRef.current.find((r) => r.id === activeId);
     if (!existing) return;
-    const updated = toRecord(existing, slip, evaluate(slip, factors, next, ai), ai, factors, next);
+    const updated = toRecord(existing, slip, evaluate(slip, next, ai), ai, next);
     commit(recordsRef.current.map((r) => (r.id === existing.id ? updated : r)), [updated]);
   };
 
@@ -452,47 +441,22 @@ export function BetApp() {
                 )}
               </div>
 
-              <div className={cn(T.card, "flex flex-col gap-4 p-5")}>
-                <div className="flex items-baseline justify-between">
-                  <h2 className="font-kalshi-bold text-lg">Context</h2>
-                  <span className={cn("text-xs", T.muted)}>{ai ? "Filled by AI research" : "Your estimates"}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Stepper label="Pick L10 Wins" value={factors.pickForm} min={0} max={10} onChange={(n) => setFactor("pickForm", n)} format={(n) => `${n}-${10 - n}`} />
-                  <Stepper label="Opp L10 Wins" value={factors.oppForm} min={0} max={10} onChange={(n) => setFactor("oppForm", n)} format={(n) => `${n}-${10 - n}`} />
-                  <Stepper label="SOS Edge" value={factors.sosEdge} min={-5} max={5} onChange={(n) => setFactor("sosEdge", n)} format={(n) => (n > 0 ? `+${n}` : String(n))} />
-                  <Stepper label="Rest Diff (days)" value={factors.restDiff} min={-7} max={7} onChange={(n) => setFactor("restDiff", n)} format={(n) => (n > 0 ? `+${n}` : String(n))} />
-                  <Field label="Pick Injuries">
-                    <select value={factors.pickInjuries} onChange={(e) => setFactor("pickInjuries", Number(e.target.value) as InjuryImpact)} className={T.input}>
-                      {INJURY_LABELS.map((l, i) => (
-                        <option key={l} value={i}>{l}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Opp Injuries">
-                    <select value={factors.oppInjuries} onChange={(e) => setFactor("oppInjuries", Number(e.target.value) as InjuryImpact)} className={T.input}>
-                      {INJURY_LABELS.map((l, i) => (
-                        <option key={l} value={i}>{l}</option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
-              </div>
+              <PickCard slip={slip} ai={ai} evaluation={evaluation} researching={running} hasKey={!!accessKey} />
 
               <button
                 type="button"
                 disabled={!slipReady || running}
-                onClick={() => void runEvaluation()}
+                onClick={() => void runEvaluation(slip)}
                 className="flex items-center justify-center gap-2 rounded-xl bg-[#00DD94] py-3.5 text-sm font-bold text-[#050D0A] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {running ? (
                   <>
-                    <Loader2 className="size-4 animate-spin" /> {accessKey ? "Researching form, injuries, rest…" : "Evaluating…"}
+                    <Loader2 className="size-4 animate-spin" /> Researching…
                   </>
                 ) : (
                   <>
                     {accessKey ? <Sparkles className="size-4" /> : <Calculator className="size-4" />}
-                    Run Evaluation & Save
+                    {accessKey ? (ai ? "Re-run Research & Save" : "Research & Save") : "Save Without Research"}
                   </>
                 )}
               </button>
@@ -524,7 +488,7 @@ export function BetApp() {
                     )}
                   >
                     {ai ? <Brain className="size-3" /> : <Calculator className="size-3" />}
-                    {ai ? `AI · ${ai.confidence}` : `Math · ${evaluation.confidence}`}
+                    {ai ? `AI · ${ai.hitConfidence}/10` : "Market only"}
                   </span>
                 </div>
 
@@ -583,20 +547,14 @@ export function BetApp() {
                   ))}
                 </ul>
 
-                {ai && (
-                  <div className={cn(T.inset, "flex flex-col gap-2 p-4 text-sm")}>
-                    <p className={T.label}>AI Synthesis</p>
-                    <p className="leading-relaxed text-[#F5F7F4]/85">{ai.summary}</p>
-                    {ai.risks.length > 0 && (
-                      <ul className="mt-1 flex flex-col gap-1 text-xs">
-                        {ai.risks.map((r) => (
-                          <li key={r} className="text-[#FF3B30]/90">
-                            ▲ {r}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
+                {ai && ai.risks.length > 0 && (
+                  <ul className="flex flex-col gap-1 text-xs">
+                    {ai.risks.map((r) => (
+                      <li key={r} className="text-[#FF3B30]/90">
+                        ▲ {r}
+                      </li>
+                    ))}
+                  </ul>
                 )}
 
                 {notes.length > 0 && (

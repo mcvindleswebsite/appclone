@@ -1,7 +1,6 @@
 export type Side = "YES" | "NO";
 export type RiskLevel = 1 | 2 | 3 | 4 | 5;
 export type Outcome = "PENDING" | "WIN" | "LOSS";
-export type InjuryImpact = 0 | 1 | 2 | 3;
 
 /** The bet slip as read from a screenshot and verified by hand. */
 export interface BetSlip {
@@ -16,28 +15,29 @@ export interface BetSlip {
   americanOdds: number | null;
 }
 
-/** Contextual inputs. Positive values favor the pick. */
-export interface ContextFactors {
-  /** Pick's wins in its last 10 games. */
-  pickForm: number;
-  /** Opponent's wins in its last 10 games. */
-  oppForm: number;
-  /** -5 (pick faced far tougher schedule) to +5 (opponent did). */
-  sosEdge: number;
-  pickInjuries: InjuryImpact;
-  oppInjuries: InjuryImpact;
-  /** Pick's rest days minus opponent's. */
-  restDiff: number;
+export interface InjuryFactor {
+  note: string;
+  /** Effect on the YES side. */
+  effect: "helps" | "hurts" | "neutral";
 }
 
-/** What the AI synthesis returns, merged into the evaluation. */
+/** What the AI research returns for a slip. */
 export interface AiSynthesis {
   probability: number;
-  confidence: "low" | "medium" | "high";
-  summary: string;
+  /** 1-10 confidence in the probability estimate. */
+  hitConfidence: number;
+  /** 1-5 variance of the bet itself (not the user's tolerance). */
+  riskRating: RiskLevel;
+  /** Two sentences: the case, then the main risk. */
+  reasoning: string;
+  last10: { hits: number; games: number; detail: string };
+  /** Opposing defense rank vs this stat; 1 = toughest matchup. */
+  matchup: { rank: number; outOf: number; label: string };
+  injuries: InjuryFactor[];
   pathsToVictory: string[];
   risks: string[];
-  factors: ContextFactors;
+  /** EV of YES at the slip price after fees, % of stake. Computed server-side. */
+  evPercent: number;
   model: string;
 }
 
@@ -46,7 +46,6 @@ export interface BetRecord {
   createdAt: number;
   updatedAt: number;
   slip: BetSlip;
-  factors: ContextFactors;
   risk: RiskLevel;
   side: Side | null;
   verdict: string;
@@ -54,6 +53,8 @@ export interface BetRecord {
   edge: number;
   summary: string;
   ai: boolean;
+  /** AI variance rating, when researched. */
+  aiRisk?: RiskLevel;
   outcome: Outcome;
 }
 
