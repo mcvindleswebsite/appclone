@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { RISK_PROFILES } from "@/lib/bet/engine";
 import { buildInsights, historyContext, legTally, slipLabel, sportsOf } from "@/lib/bet/history";
@@ -11,6 +11,9 @@ import type { BetLeg, BetRecord, LegResult, Outcome } from "@/types/bet";
 import { T } from "./theme";
 
 const FILTERS = ["ALL", "PENDING", "WIN", "LOSS"] as const;
+
+/** How often an open Vault re-checks pending picks against Kalshi. */
+const AUTO_SYNC_MS = 2 * 60 * 1000;
 
 /** Leg results are data, not accents: always green for a hit and red for a miss. */
 const LEG_RESULT_STYLES: Record<LegResult, string> = {
@@ -133,11 +136,41 @@ export function BetVault({
   const settled = insights.record.wins + insights.record.losses;
   const refreshable = records.some((r) => r.outcome === "PENDING" && (r.slip.comboTicker || r.slip.legs.some((l) => l.ticker)));
 
-  const refresh = async () => {
-    setRefreshing(true);
-    setRefreshNote(await onRefresh());
-    setRefreshing(false);
-  };
+  const [lastSync, setLastSync] = useState<string | null>(null);
+  const busy = useRef(false);
+
+  const refresh = useCallback(
+    async (quiet = false) => {
+      if (busy.current) return;
+      busy.current = true;
+      if (!quiet) setRefreshing(true);
+      const note = await onRefresh();
+      // Auto-polls only speak up when something actually changed.
+      if (!quiet || !note.startsWith("Nothing")) setRefreshNote(note);
+      setLastSync(new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }));
+      setRefreshing(false);
+      busy.current = false;
+    },
+    [onRefresh]
+  );
+
+  // Live games: while the Vault is open and on screen, re-check pending picks every 2 minutes.
+  const latestRefresh = useRef(refresh);
+  useEffect(() => {
+    latestRefresh.current = refresh;
+  });
+  useEffect(() => {
+    if (!refreshable) return;
+    const tick = () => {
+      if (document.visibilityState === "visible") void latestRefresh.current(true);
+    };
+    const first = setTimeout(tick, 1500);
+    const timer = setInterval(tick, AUTO_SYNC_MS);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, [refreshable]);
   const shown = filter === "ALL" ? records : records.filter((r) => r.outcome === filter);
 
   return (
@@ -198,10 +231,15 @@ export function BetVault({
             type="button"
             disabled={refreshing}
             onClick={() => void refresh()}
-            className="flex items-center gap-1.5 rounded-full bg-[#121824] px-4 py-2 text-xs font-semibold text-[#F5F7F4]/85 hover:text-white disabled:opacity-50"
+            className="flex min-h-9 items-center gap-1.5 rounded-full bg-[#121824] px-4 text-xs font-semibold text-[#F5F7F4]/85 hover:text-white disabled:opacity-50"
           >
-            <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} /> Check Kalshi results
+            <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} /> Sync Results
           </button>
+        )}
+        {refreshable && (
+          <span className={cn("text-[11px]", T.muted)}>
+            Auto-sync every 2 min{lastSync ? ` · last ${lastSync}` : ""}
+          </span>
         )}
         {refreshNote && <span className={cn("text-xs", T.muted)}>{refreshNote}</span>}
       </div>

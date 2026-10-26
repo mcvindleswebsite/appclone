@@ -351,6 +351,24 @@ export function BetApp() {
     return updated.length ? "Updated leg results — nothing fully settled yet." : "Nothing new has settled yet.";
   };
 
+  /**
+   * Sync Results: with a synced key the server settles the whole Upstash vault (the same job
+   * the hourly cron runs) and the page pulls the result; a local-only vault settles here.
+   */
+  const syncResults = async () => {
+    if (!accessKey || sync !== "synced") return refreshOutcomes();
+    try {
+      const response = await fetch("/api/vault/sync-results", { method: "POST", headers: { "x-bet-key": accessKey } });
+      const data = (await response.json()) as { settled?: number; updated?: number; error?: string };
+      if (!response.ok) return refreshOutcomes();
+      await syncRemote(accessKey);
+      if (data.settled) return `Settled ${data.settled} pick${data.settled > 1 ? "s" : ""}.`;
+      return data.updated ? "Updated leg results — nothing fully settled yet." : "Nothing new has settled yet.";
+    } catch {
+      return refreshOutcomes();
+    }
+  };
+
   const saveKey = (key: string) => {
     setAccessKey(key);
     if (key) {
@@ -450,7 +468,7 @@ export function BetApp() {
             onOutcome={setOutcome}
             onDelete={removeRecord}
             onQuickAdd={quickAdd}
-            onRefresh={refreshOutcomes}
+            onRefresh={syncResults}
           />
         ) : (
           <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
