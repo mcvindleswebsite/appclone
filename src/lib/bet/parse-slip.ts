@@ -7,7 +7,10 @@ const SPORT_KEYWORDS: [string, RegExp][] = [
   ["NHL", /\bnhl\b|hockey|bruins|rangers|oilers|maple leafs|panthers|puck/i],
   ["NCAAF", /college football|ncaaf|cfb\b/i],
   ["NCAAB", /college basketball|ncaab|march madness/i],
-  ["Soccer", /soccer|premier league|\bmls\b|champions league|la liga|\bfc\b/i],
+  [
+    "Soccer",
+    /soccer|premier league|\bmls\b|champions league|la liga|serie a|bundesliga|\bfc\b|both teams to score|\bbtts\b|arsenal|chelsea|liverpool|man(?:chester)? (?:city|united|utd)|tottenham|newcastle|aston villa|real madrid|barcelona|atletico|bayern|dortmund|juventus|inter milan|ac milan|\bpsg\b/i,
+  ],
   ["UFC", /\bufc\b|\bmma\b|fight night|knockout/i],
   ["Tennis", /tennis|\batp\b|\bwta\b|grand slam/i],
   ["Golf", /\bpga\b|golf|masters/i],
@@ -75,10 +78,66 @@ const singleLeg = (text: string, lines: string[]): BetLeg => {
   return leg;
 };
 
+/** A probability or price on its own: "46%", "46¢", "+120". */
+const PERCENT = /(\d{1,2}(?:\.\d)?)\s?%/;
+const QUOTE_ONLY = /^(?:\d{1,2}(?:\.\d)?\s?%|\d{1,2}\s?(?:¢|c|€)|[+-]\d{3,4})(?:\s*chance)?$/i;
+
+/**
+ * Slip chrome inside a block that isn't a pick: side labels, times, money, and headers.
+ * Deliberately doesn't catch "to win" on its own, which is a pick ("Lakers to win").
+ */
+const BLOCK_NOISE =
+  /^(?:yes|no|buy|sell|pick|picks|leg \d+|\d+ legs?|live|final|today|tomorrow|tonight|(?:mon|tue|wed|thu|fri|sat|sun)\w*|q[1-4]|\d{1,2}:\d{2}\s?(?:am|pm)?.*|(?:pro|college) (?:football|basketball)|nfl|nba|mlb|nhl|ncaaf|ncaab|soccer|ufc|tennis|golf)$|\$\s?\d|^(?:parlay|combo|wager|stake|payout|potential|cost|total odds|place bet|cash ?out|bet slip|same game|sgp)\b|\bchance\b/i;
+
+/** Price in cents from a line: Kalshi's ¢ price, or its % chance (46% trades at 46¢). */
+const centsIn = (line: string) => {
+  const cents = line.match(new RegExp(CENTS, "i"));
+  if (cents) return Number(cents[1]);
+  const percent = line.match(PERCENT);
+  return percent ? Math.min(99, Math.max(1, Math.round(Number(percent[1])))) : null;
+};
+
+const stripQuotes = (line: string) =>
+  clean(line.replace(ODDS, " ").replace(new RegExp(CENTS, "gi"), " ").replace(new RegExp(PERCENT.source, "g"), " "));
+
+/** "Lakers vs Celtics · 7:30 PM" → "Lakers vs Celtics", if the line is a matchup header. */
+const matchupHeader = (line: string) => {
+  const game = line.match(MATCHUP);
+  if (!game) return null;
+  // A line like "LeBron James 25+ points vs Celtics" is a pick, not a header.
+  if (LEG_LINE.test(line.replace(game[0], "")) || /\d+(?:\.\d)?\+/.test(game[0])) return null;
+  return `${clean(game[1])} vs ${clean(game[2])}`;
+};
+
+/** Leading words that aren't who the pick is on ("Both teams to score", "Over 47.5"). */
+const GENERIC_PICK = /^(?:both|draw|over|under|total|yes|no|either|neither|any|first|last)$/i;
+
+const makeLeg = (line: string, matchup: string): BetLeg => {
+  const market = stripQuotes(line);
+  const odds = line.match(ODDS);
+  const pick = pickFrom(market);
+  return {
+    sport: detectSport(`${market} ${matchup}`),
+    matchup,
+    market,
+    pick: pick && !GENERIC_PICK.test(pick) ? pick : market,
+    price: centsIn(line),
+    americanOdds: odds ? Number(odds[1]) : null,
+  };
+};
+
 /**
  * Pulls a slip out of OCR text from a Kalshi market, a Kalshi combo, or a sportsbook
  * parlay screenshot: up to 12 legs plus the combo price or parlay odds. Anything it can't
  * find is left empty for the manual form.
+ *
+ * Kalshi combos stack one block per game, top to bottom:
+ *   Lakers vs Celtics        ← matchup header
+ *   Lakers to win            ← pick (or "Over 47.5 points", "LeBron 25+ points")
+ *   46%                      ← chance, which is the price in cents
+ * Every block is read, and a block with several picks (a same-game parlay) yields a leg
+ * per pick. Lines before the first header still count as legs when they read like
+ * selections, which covers sportsbook slips that list legs without game headers.
  */
 export const parseSlipText = (raw: string): BetSlip => {
   const text = raw.replace(/[−–—]/g, "-");
@@ -87,39 +146,56 @@ export const parseSlipText = (raw: string): BetSlip => {
 
   const legs: BetLeg[] = [];
   let matchup = "";
-  for (let i = 0; i < lines.length && legs.length < MAX_LEGS; i++) {
-    const line = lines[i];
-    const game = line.match(MATCHUP);
-    if (game && !LEG_LINE.test(line.replace(game[0], ""))) {
-      matchup = `${clean(game[1])} vs ${clean(game[2])}`;
+  let inBlock = false;
+  let pricedLast = true;
+  for (const line of lines) {
+    if (legs.length >= MAX_LEGS) break;
+    const header = matchupHeader(line);
+    if (header) {
+      matchup = header;
+      inBlock = true;
       continue;
     }
-    if (!LEG_LINE.test(line) || NOT_LEG.test(line) || line.length < 5) continue;
 
-    // Odds or a price often sit on the leg's own line or the line right after it.
-    const next = lines[i + 1] ?? "";
-    const nextIsQuote = /^([+-]\d{3,4}|\d{1,2}\s?(?:¢|c|€))$/i.test(next);
-    const quoteText = `${line} ${nextIsQuote ? next : ""}`;
-    const odds = quoteText.match(ODDS);
-    const price = quoteText.match(new RegExp(CENTS, "i"));
-    const market = clean(line.replace(ODDS, " ").replace(new RegExp(CENTS, "i"), " "));
-    legs.push({
-      sport: detectSport(`${market} ${matchup}`) === "Other" ? sport : detectSport(`${market} ${matchup}`),
-      matchup,
-      market,
-      pick: pickFrom(market),
-      price: price ? Number(price[1]) : null,
-      americanOdds: odds ? Number(odds[1]) : null,
-    });
-    if (nextIsQuote) i++;
+    // A quote on its own line belongs to the pick just above it.
+    if (QUOTE_ONLY.test(line)) {
+      const last = legs.at(-1);
+      if (last && !pricedLast) {
+        const odds = line.match(ODDS);
+        if (odds) last.americanOdds = Number(odds[1]);
+        else last.price = centsIn(line);
+        pricedLast = true;
+      }
+      continue;
+    }
+
+    const isPick = inBlock
+      ? !BLOCK_NOISE.test(line) && /[A-Za-z]{2}/.test(line)
+      : LEG_LINE.test(line) && !NOT_LEG.test(line);
+    if (!isPick || line.length < 3) continue;
+
+    const leg = makeLeg(line, matchup);
+    legs.push(leg);
+    pricedLast = leg.price !== null || leg.americanOdds !== null;
   }
+
+  // A leg with no sport cue of its own takes the slip's sport only when every leg that
+  // has a cue agrees; a mixed slip leaves it as Other rather than guessing.
+  const cued = new Set(legs.map((l) => l.sport).filter((s) => s !== "Other"));
+  const fallback = cued.size === 1 ? [...cued][0] : cued.size === 0 ? sport : "Other";
+  for (const leg of legs) if (leg.sport === "Other") leg.sport = fallback;
 
   const comboOddsLine = lines.find((l) => /\b(parlay|combo|total odds|sgp|odds)\b/i.test(l) && ODDS.test(l));
   const comboOdds = comboOddsLine ? Number(comboOddsLine.match(ODDS)![1]) : null;
 
-  if (legs.length <= 1) {
+  if (legs.length === 0) {
     return { legs: [singleLeg(text, lines)], comboPrice: null, comboOdds: null };
   }
-  const comboPrice = text.match(new RegExp(String.raw`(?:\byes\b|price|cost)[^\d\n]{0,12}${CENTS}`, "i"));
-  return { legs, comboPrice: comboPrice ? Number(comboPrice[1]) : null, comboOdds };
+  if (legs.length === 1) return { legs, comboPrice: null, comboOdds: null };
+
+  // The combo's own price: a "Yes 8¢" / "Cost 8¢" quote, or its "12% chance" header.
+  const cents = text.match(new RegExp(String.raw`(?:\byes\b|price|cost)[^\d\n]{0,12}${CENTS}`, "i"));
+  const chance = lines.find((l) => /\bchance\b/i.test(l) && PERCENT.test(l));
+  const comboPrice = cents ? Number(cents[1]) : chance ? centsIn(chance) : null;
+  return { legs, comboPrice, comboOdds };
 };

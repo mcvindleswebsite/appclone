@@ -249,12 +249,17 @@ export function BetApp() {
   const onParsed = useCallback((parsed: BetSlip, raw: string) => {
     setOcrText(raw);
     setSlip(parsed);
-    const usable = parsed.legs.some((l) => (l.price !== null || l.americanOdds !== null) && (l.market || l.matchup));
+    // A leg only needs a pick and something to anchor it (its game or market); a missing
+    // price is fine — research still runs and the price can be filled in afterwards.
+    const usable = parsed.legs.some((l) => (l.pick || l.market) && (l.matchup || l.market));
     const n = parsed.legs.length;
+    const unpriced = parsed.legs.filter((l) => l.price === null && l.americanOdds === null).length;
     setNotice(
       usable
-        ? `Read ${n > 1 ? `${n} legs` : "the slip"} from the screenshot — researching now. Fix anything wrong and tap Re-run.`
-        : "Couldn't read enough from the screenshot — fill in the legs, then tap Research."
+        ? `Read ${n > 1 ? `${n} legs` : "the slip"} from the screenshot — researching now.${
+            unpriced ? ` ${unpriced} without a price; add it for EV.` : ""
+          } Fix anything wrong and tap Re-run.`
+        : "No picks found in that screenshot — fill in the legs, then tap Research."
     );
     if (usable) void latest.current.run(parsed, true);
     else {
