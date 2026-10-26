@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { checkAccess } from "@/lib/bet/access";
 import { americanToDecimal, kalshiDecimal, legDecimal } from "@/lib/bet/engine";
 import { historyContext } from "@/lib/bet/history";
+import { BET_MODEL } from "@/lib/bet/model";
 import { readVault } from "@/lib/bet/store";
 import {
   MAX_LEGS,
@@ -20,13 +21,7 @@ export const dynamic = "force-dynamic";
 // Legs are researched in parallel, so a 12-leg slip takes about as long as one leg.
 export const maxDuration = 120;
 
-/**
- * Locked to Haiku, with no fallback to Sonnet or Opus. Claude Haiku 3.5
- * (claude-3-5-haiku-20241022, alias claude-3-5-haiku-latest) was retired on Feb 19, 2026
- * and now returns an error, so this is its current successor. Haiku has no server-side
- * refusal fallback, so a decline is just an error.
- */
-const MODEL = "claude-haiku-5-5";
+const MODEL = BET_MODEL;
 const MAX_TURNS = 3;
 
 const client = () => new Anthropic({ timeout: 90_000, maxRetries: 1 });
@@ -48,10 +43,10 @@ Flag the spots this exposes:
 - playUpSpot: this leg backs an underdog that systematically elevates its level against top-tier opposition (e.g. strong results against the top four) — a high-value underdog spot.
 Leave both false when the evidence isn't there, and for props or sports where opponent tier doesn't apply.
 
-Estimate the true probability the leg hits. The market price, when given, is a strong prior; move off it only as far as the evidence justifies.
+Estimate the true probability the leg hits. When a market price is given it's a strong prior; move off it only as far as the evidence justifies. Often there's no price — the user typed the leg in — so build the probability from your research alone, including what books and markets are currently pricing it at if you find that.
 
 Rate the leg:
-- STRONG VALUE: your probability is clearly above what the price implies, and the trend, matchup, and usage all support it.
+- STRONG VALUE: your probability is clearly above what the price implies (with no price given, above what this selection is typically priced at), and the trend, matchup, and usage all support it.
 - NEUTRAL: roughly fairly priced, or mixed evidence.
 - BUM PICK: likely to miss or clearly overpriced — a poor 10-game hit rate, a bad defensive matchup, a usage reduction, or similar. A leg backing a favorite in a trap game is always a BUM PICK: a proven record of struggling against this kind of lower-tier opponent outweighs a strong overall record.
 

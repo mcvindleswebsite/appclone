@@ -2,7 +2,7 @@
 
 import { Loader2 } from "lucide-react";
 
-import type { Evaluation } from "@/lib/bet/engine";
+import { formatAmerican, probToAmerican, type Evaluation } from "@/lib/bet/engine";
 import { cn } from "@/lib/utils";
 import type { BetLeg, InjuryFactor, SlipAnalysis } from "@/types/bet";
 
@@ -156,16 +156,25 @@ export function PickCard({
               )}
             </Metric>
 
-            <Metric label="+EV Edge" className="col-span-2 sm:col-span-1">
-              <p className={cn("font-kalshi-condensed text-3xl tabular-nums", best.edge > 0 ? T.yes : T.no)}>
-                {best.roi >= 0 ? "+" : ""}
-                {(best.roi * 100).toFixed(1)}%
-              </p>
-              <p className={cn("text-[11px] leading-snug", T.muted)}>
-                {best.side} @ {Math.round(best.price * 100)}¢ · {best.edge >= 0 ? "+" : ""}
-                {(best.edge * 100).toFixed(1)} pts after fees
-              </p>
-            </Metric>
+            {leg.price === null ? (
+              <Metric label="Model Odds" className="col-span-2 sm:col-span-1">
+                <p className="font-kalshi-condensed text-3xl tabular-nums">{formatAmerican(probToAmerican(evaluation.probability))}</p>
+                <p className={cn("text-[11px] leading-snug", T.muted)}>
+                  {Math.round(evaluation.probability * 100)}% to hit · no market price to measure EV against
+                </p>
+              </Metric>
+            ) : (
+              <Metric label="+EV Edge" className="col-span-2 sm:col-span-1">
+                <p className={cn("font-kalshi-condensed text-3xl tabular-nums", best.edge > 0 ? T.yes : T.no)}>
+                  {best.roi >= 0 ? "+" : ""}
+                  {(best.roi * 100).toFixed(1)}%
+                </p>
+                <p className={cn("text-[11px] leading-snug", T.muted)}>
+                  {best.side} @ {Math.round(best.price * 100)}¢ · {best.edge >= 0 ? "+" : ""}
+                  {(best.edge * 100).toFixed(1)} pts after fees
+                </p>
+              </Metric>
+            )}
           </div>
 
           <p className={cn("text-sm", ai.rating === "BUM PICK" ? "text-[#FF3B30]" : "text-[#F5F7F4]/85")}>{ai.reason}</p>

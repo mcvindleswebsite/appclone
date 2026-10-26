@@ -142,7 +142,9 @@ export const evaluate = (leg: BetLeg, risk: RiskLevel, ai: SlipAnalysis | null):
   // Without research there are no evidence-backed paths, so nothing qualifies.
   const pathsFor: Record<Side, string[]> = { YES: ai?.pathsToVictory ?? [], NO: ai?.risks ?? [] };
   const fails = (s: SideEval) => [
-    ...(leg.price === null ? ["Needs a Kalshi price to measure the edge"] : []),
+    ...(leg.price === null
+      ? [`No market price — model says ${Math.round(probability * 100)}% (fair ${formatAmerican(probToAmerican(probability))}); import the Kalshi link to measure EV`]
+      : []),
     ...failures(s, risk, confidence, pathsFor[s.side].length, legs, variance),
   ];
 

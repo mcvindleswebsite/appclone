@@ -38,9 +38,44 @@ const preprocess = async (file: Blob) => {
   return canvas;
 };
 
-export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: string) => void }) {
+/** Claude vision reads images up to ~1568px on the long edge; send a JPEG at that size. */
+const toVisionJpeg = async (file: Blob) => {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1568 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+};
+
+/** Reads the slip with Claude vision; null if that isn't available, so OCR can take over. */
+const readWithVision = async (file: Blob, accessKey: string): Promise<BetSlip | null> => {
+  try {
+    const response = await fetch("/api/parse-slip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-bet-key": accessKey },
+      body: JSON.stringify({ image: await toVisionJpeg(file), mediaType: "image/jpeg" }),
+    });
+    if (!response.ok) return null;
+    const slip = (await response.json()) as BetSlip;
+    return slip.legs?.length ? slip : null;
+  } catch {
+    return null;
+  }
+};
+
+export function SlipReader({
+  onParsed,
+  accessKey,
+}: {
+  onParsed: (slip: BetSlip, rawText: string) => void;
+  /** When set, screenshots go to Claude vision first; on-device OCR is the fallback. */
+  accessKey: string;
+}) {
   const [preview, setPreview] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
+  const [visionBusy, setVisionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -52,6 +87,16 @@ export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: st
         if (old) URL.revokeObjectURL(old);
         return URL.createObjectURL(file);
       });
+      if (accessKey) {
+        setVisionBusy(true);
+        const slip = await readWithVision(file, accessKey);
+        setVisionBusy(false);
+        if (slip) {
+          onParsed(slip, `Read by Vindle AI vision: ${slip.legs.length} leg${slip.legs.length > 1 ? "s" : ""}.`);
+          return;
+        }
+      }
+
       setProgress(0);
       try {
         const [{ createWorker }, canvas] = await Promise.all([import("tesseract.js"), preprocess(file)]);
@@ -69,7 +114,7 @@ export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: st
         setProgress(null);
       }
     },
-    [onParsed]
+    [onParsed, accessKey]
   );
 
   // Paste a screenshot anywhere on the page.
@@ -86,7 +131,7 @@ export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: st
     return () => window.removeEventListener("paste", onPaste);
   }, [read]);
 
-  const busy = progress !== null;
+  const busy = visionBusy || progress !== null;
 
   return (
     <div
@@ -119,14 +164,19 @@ export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: st
           {busy ? "Reading slip…" : "Scan a Kalshi screenshot"}
         </p>
         <p className={cn("text-xs", T.muted)}>
-          {busy
-            ? `${Math.round((progress ?? 0) * 100)}% — first scan downloads the OCR model`
-            : "Drop an image, browse, or paste (Ctrl/⌘+V)"}
+          {visionBusy
+            ? "Vindle AI is reading every leg…"
+            : busy
+              ? `${Math.round((progress ?? 0) * 100)}% — on-device OCR (first scan downloads the model)`
+              : "Drop an image, browse, or paste (Ctrl/⌘+V)"}
         </p>
         {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
         {busy && (
           <div className="mt-2 h-1 overflow-hidden rounded-full bg-[#1E2638]">
-            <div className="h-full bg-(--accent) transition-all" style={{ width: `${(progress ?? 0) * 100}%` }} />
+            <div
+              className={cn("h-full bg-(--accent) transition-all", visionBusy && "w-1/3 animate-pulse")}
+              style={visionBusy ? undefined : { width: `${(progress ?? 0) * 100}%` }}
+            />
           </div>
         )}
       </div>

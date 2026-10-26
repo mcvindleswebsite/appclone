@@ -7,7 +7,9 @@ import { BrandLogo } from "@/app/bet/components/BrandLogo";
 import {
   evaluate,
   evaluateParlay,
+  formatAmerican,
   kalshiDecimal,
+  probToAmerican,
   RISK_PROFILES,
   type Evaluation,
   type ParlayEvaluation,
@@ -465,7 +467,7 @@ export function BetApp() {
                   or scan a screenshot
                   <span className="h-px flex-1 bg-[#1E2638]" />
                 </div>
-                <SlipReader onParsed={onParsed} />
+                <SlipReader onParsed={onParsed} accessKey={keyBroken ? "" : accessKey} />
                 {notice && <p className="text-xs text-[#F5F7F4]">{notice}</p>}
 
                 <LegEditor slip={slip} onChange={editSlip} />
@@ -545,51 +547,72 @@ export function BetApp() {
                     </span>
                   </div>
 
-                  {/* Market vs model probability */}
-                  <div className="flex flex-col gap-2">
-                    <div className="flex justify-between text-xs">
-                      <span className={T.muted}>Market {pct(marketProb)}</span>
-                      <span className="font-semibold">Model {pct(single.probability)}</span>
+                  {leg.price === null ? (
+                    /* No market price (typed in by hand): the model's own odds stand alone. */
+                    <div className={cn(T.inset, "grid grid-cols-2 gap-3 p-3")}>
+                      <div>
+                        <p className={T.label}>Model Win Prob</p>
+                        <p className="font-kalshi-condensed mt-1 text-3xl tabular-nums">{ai ? pct(single.probability) : "—"}</p>
+                      </div>
+                      <div>
+                        <p className={T.label}>Model Fair Odds</p>
+                        <p className="font-kalshi-condensed mt-1 text-3xl tabular-nums">
+                          {ai ? formatAmerican(probToAmerican(single.probability)) : "—"}
+                        </p>
+                      </div>
+                      <p className={cn("col-span-2 text-[11px]", T.muted)}>
+                        Import the Kalshi link or screenshot to compare against the market price and get an EV verdict.
+                      </p>
                     </div>
-                    <div className="relative h-2.5 overflow-hidden rounded-full bg-[#FF3B30]/25">
-                      <div className="absolute inset-y-0 left-0 bg-(--accent)" style={{ width: pct(single.probability) }} />
-                      <div className="absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(marketProb) }} />
+                  ) : (
+                    <>
+                    {/* Market vs model probability */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex justify-between text-xs">
+                        <span className={T.muted}>Market {pct(marketProb)}</span>
+                        <span className="font-semibold">Model {pct(single.probability)}</span>
+                      </div>
+                      <div className="relative h-2.5 overflow-hidden rounded-full bg-[#FF3B30]/25">
+                        <div className="absolute inset-y-0 left-0 bg-(--accent)" style={{ width: pct(single.probability) }} />
+                        <div className="absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(marketProb) }} />
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className={T.yes}>YES {leg.pick}</span>
+                        <span className={T.no}>NO</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between text-[11px]">
-                      <span className={T.yes}>YES {leg.pick}</span>
-                      <span className={T.no}>NO</span>
-                    </div>
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    {(["YES", "NO"] as const).map((side) => {
-                      const s = single.sides[side];
-                      const positive = s.edge > 0;
-                      return (
-                        <div
-                          key={side}
-                          className={cn(
-                            T.inset,
-                            "p-3",
-                            single.side === side && (side === "YES" ? "border-(--accent)/60" : "border-[#FF3B30]/60")
-                          )}
-                        >
-                          <div className="flex items-baseline justify-between">
-                            <span className={cn("font-kalshi-bold text-sm", side === "YES" ? T.yes : T.no)}>{side}</span>
-                            <span className="text-sm tabular-nums">{Math.round(s.price * 100)}¢</span>
+                    <div className="grid grid-cols-2 gap-3">
+                      {(["YES", "NO"] as const).map((side) => {
+                        const s = single.sides[side];
+                        const positive = s.edge > 0;
+                        return (
+                          <div
+                            key={side}
+                            className={cn(
+                              T.inset,
+                              "p-3",
+                              single.side === side && (side === "YES" ? "border-(--accent)/60" : "border-[#FF3B30]/60")
+                            )}
+                          >
+                            <div className="flex items-baseline justify-between">
+                              <span className={cn("font-kalshi-bold text-sm", side === "YES" ? T.yes : T.no)}>{side}</span>
+                              <span className="text-sm tabular-nums">{Math.round(s.price * 100)}¢</span>
+                            </div>
+                            <dl className="mt-2 grid grid-cols-2 gap-y-1 text-xs tabular-nums">
+                              <dt className={T.muted}>Fair</dt>
+                              <dd className="text-right">{s.fairCents}¢</dd>
+                              <dt className={T.muted}>Edge</dt>
+                              <dd className={cn("text-right font-semibold", positive ? T.yes : T.no)}>{pts(s.edge)} pts</dd>
+                              <dt className={T.muted}>EV / $1</dt>
+                              <dd className={cn("text-right", positive ? T.yes : T.no)}>{pts(s.roi)}¢</dd>
+                            </dl>
                           </div>
-                          <dl className="mt-2 grid grid-cols-2 gap-y-1 text-xs tabular-nums">
-                            <dt className={T.muted}>Fair</dt>
-                            <dd className="text-right">{s.fairCents}¢</dd>
-                            <dt className={T.muted}>Edge</dt>
-                            <dd className={cn("text-right font-semibold", positive ? T.yes : T.no)}>{pts(s.edge)} pts</dd>
-                            <dt className={T.muted}>EV / $1</dt>
-                            <dd className={cn("text-right", positive ? T.yes : T.no)}>{pts(s.roi)}¢</dd>
-                          </dl>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                    </>
+                  )}
 
                   <ul className="flex flex-col gap-1.5 text-sm">
                     {single.reasons.map((reason) => (
