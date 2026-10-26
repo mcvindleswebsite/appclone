@@ -280,6 +280,83 @@ export const resolveTimings = async (tickers: string[]): Promise<Record<string, 
   return out;
 };
 
+interface Candle {
+  end_period_ts: number;
+  price?: { close_dollars?: string };
+  yes_bid?: { close_dollars?: string };
+  yes_ask?: { close_dollars?: string };
+}
+
+export interface ClosingLine {
+  /** "closed": the game started and a price was found; "upcoming": not started yet; "none": no data. */
+  status: "closed" | "upcoming" | "none";
+  /** Fair YES price in cents at the start (bid/ask midpoint, else last trade), one decimal. */
+  yes: number | null;
+  startsAt: string | null;
+}
+
+/** Fair price from one candle: the bid/ask midpoint when both sides quote, else the last trade. */
+const candleFair = (c: Candle) => {
+  const bid = dollars(c.yes_bid?.close_dollars);
+  const ask = dollars(c.yes_ask?.close_dollars);
+  if (bid !== null && ask !== null && bid > 0 && ask > 0 && ask >= bid) return (bid + ask) / 2;
+  const last = dollars(c.price?.close_dollars);
+  return last !== null && last > 0 ? last : null;
+};
+
+/**
+ * Closing lines for CLV: each market's fair YES price at the minute its game started, read
+ * from Kalshi's public candlestick history (no AI). Markets without a game start (no
+ * milestone) or without trading before it come back "none".
+ */
+export const resolveClosingLines = async (tickers: string[]): Promise<Record<string, ClosingLine>> => {
+  const kalshi = createClient();
+  const out: Record<string, ClosingLine> = {};
+  const now = Date.now();
+
+  await mapLimit(tickers, 4, async (ticker) => {
+    const market = await kalshi.market(ticker).catch(() => null);
+    if (!market) {
+      out[ticker] = { status: "none", yes: null, startsAt: null };
+      return;
+    }
+    const [event, start] = await Promise.all([
+      kalshi.event(market.event_ticker).catch(() => null),
+      kalshi.start(market.event_ticker),
+    ]);
+    const startMs = Date.parse(start ?? "");
+    if (!Number.isFinite(startMs)) {
+      out[ticker] = { status: "none", yes: null, startsAt: null };
+      return;
+    }
+    if (startMs > now) {
+      out[ticker] = { status: "upcoming", yes: null, startsAt: start };
+      return;
+    }
+    const series = event?.series_ticker ?? ticker.split("-")[0];
+    const startTs = Math.floor(startMs / 1000);
+    // Minute candles for the half hour before kickoff, then hourly over the prior day.
+    for (const [from, interval] of [
+      [startTs - 1800, 1],
+      [startTs - 86_400, 60],
+    ] as const) {
+      const data = await get<{ candlesticks?: Candle[] }>(
+        `/series/${encodeURIComponent(series)}/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${from}&end_ts=${startTs + 60}&period_interval=${interval}`
+      ).catch(() => null);
+      const before = (data?.candlesticks ?? []).filter((c) => c.end_period_ts <= startTs + 60);
+      for (let i = before.length - 1; i >= 0; i--) {
+        const fair = candleFair(before[i]);
+        if (fair !== null) {
+          out[ticker] = { status: "closed", yes: Math.round(fair * 1000) / 10, startsAt: start };
+          return;
+        }
+      }
+    }
+    out[ticker] = { status: "none", yes: null, startsAt: start };
+  });
+  return out;
+};
+
 /* ------------------------------ Soccer scanner ----------------------------- */
 
 /** Kalshi match-winner series for the leagues the scanner covers. */

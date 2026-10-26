@@ -54,11 +54,20 @@ export const kalshiDecimal = (cents: number) => {
   return 1 / (p + kalshiFee(p));
 };
 
+/** Maps a model probability to its calibrated value, learned from the vault's settled picks. */
+export type Calibrator = (p: number) => number;
+
 /** What the market says a leg hits at: Kalshi price, blended with de-vigged book odds. */
 export const legMarketProbability = (leg: BetLeg) => {
   const kalshi = leg.price ? clamp(leg.price / 100, 0.01, 0.99) : null;
-  // Book odds include ~4.5% vig on a two-way market; strip it before blending.
-  const book = leg.americanOdds ? clamp(americanToProb(leg.americanOdds) / 1.045, 0.01, 0.99) : null;
+  // A sharp book's de-vigged line (fetched automatically) beats typed-in odds; typed book
+  // odds include ~4.5% vig on a two-way market, so strip it before blending.
+  const book =
+    typeof leg.bookProb === "number"
+      ? clamp(leg.bookProb, 0.01, 0.99)
+      : leg.americanOdds
+        ? clamp(americanToProb(leg.americanOdds) / 1.045, 0.01, 0.99)
+        : null;
   if (kalshi !== null && book !== null) return (kalshi + book) / 2;
   return kalshi ?? book;
 };
@@ -126,10 +135,14 @@ const failures = (s: SideEval, risk: RiskLevel, confidence: Confidence, paths: n
 };
 
 /** Straight bet on one Kalshi contract. YES is the leg as written; NO is the fade. */
-export const evaluate = (leg: BetLeg, risk: RiskLevel, ai: SlipAnalysis | null): Evaluation => {
+export const evaluate = (leg: BetLeg, risk: RiskLevel, ai: SlipAnalysis | null, calibrate?: Calibrator): Evaluation => {
   const market = legMarketProbability(leg) ?? 0.5;
   // The AI's researched read is the primary estimate, shrunk 30% toward the market.
-  const probability = ai ? clamp(ai.trueWinProbability * 0.7 + market * 0.3, 0.01, 0.99) : market;
+  const blended = ai ? clamp(ai.trueWinProbability * 0.7 + market * 0.3, 0.01, 0.99) : market;
+  // Calibration corrects the AI's track record on whichever side is being priced.
+  const cal = ai && calibrate ? calibrate : null;
+  const probability = cal ? clamp(cal(blended), 0.01, 0.99) : blended;
+  const noProbability = cal ? clamp(cal(1 - blended), 0.01, 0.99) : 1 - blended;
   const confidence = ai ? confidenceTier(ai.legs[0]?.hitConfidence ?? 1) : "low";
   const variance = ai?.riskScore ?? null;
   const legs = parlayLegs(leg.market);
@@ -137,7 +150,7 @@ export const evaluate = (leg: BetLeg, risk: RiskLevel, ai: SlipAnalysis | null):
   const yesPrice = clamp(leg.price ?? Math.round(market * 100), 1, 99) / 100;
   const sides: Record<Side, SideEval> = {
     YES: evalSide("YES", yesPrice, probability),
-    NO: evalSide("NO", 1 - yesPrice, 1 - probability),
+    NO: evalSide("NO", 1 - yesPrice, noProbability),
   };
   // Without research there are no evidence-backed paths, so nothing qualifies.
   const pathsFor: Record<Side, string[]> = { YES: ai?.pathsToVictory ?? [], NO: ai?.risks ?? [] };
@@ -223,8 +236,14 @@ const toLine = (indexes: number[], probability: number, decimal: number | null):
   ev: decimal ? probability * decimal - 1 : null,
 });
 
-export const evaluateParlay = (slip: BetSlip, risk: RiskLevel, ai: SlipAnalysis | null): ParlayEvaluation => {
+export const evaluateParlay = (
+  slip: BetSlip,
+  risk: RiskLevel,
+  ai: SlipAnalysis | null,
+  calibrate?: Calibrator
+): ParlayEvaluation => {
   const profile = RISK_PROFILES[risk].parlay;
+  const cal = (p: number) => (ai && calibrate ? clamp(calibrate(p), 0.0001, 0.99) : p);
 
   // Of each negatively correlated group, keep only the strongest leg.
   const conflicted = new Set<number>();
@@ -267,7 +286,7 @@ export const evaluateParlay = (slip: BetSlip, risk: RiskLevel, ai: SlipAnalysis 
         : null;
   const full = toLine(
     legs.map((l) => l.index),
-    ai?.trueWinProbability ?? product(legs.map(legProb)),
+    cal(ai?.trueWinProbability ?? product(legs.map(legProb))),
     fullDecimal
   );
   const bums = legs.filter((l) => l.analysis?.rating === "BUM PICK");
@@ -291,7 +310,7 @@ export const evaluateParlay = (slip: BetSlip, risk: RiskLevel, ai: SlipAnalysis 
     // Kept legs are treated as independent: conflicting legs were already removed.
     const option = toLine(
       kept.map((l) => l.index).sort((a, b) => a - b),
-      product(kept.map(legProb)),
+      cal(product(kept.map(legProb))),
       product(kept.map((l) => l.decimal!))
     );
     if ((option.ev ?? 0) > 0 && option.probability >= profile.minProb && (!trimmed || option.ev! > trimmed.ev!)) {

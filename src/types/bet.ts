@@ -29,6 +29,15 @@ export interface BetLeg {
   startsAt?: string;
   /** ISO estimate of when the leg can settle (game or period end). */
   endsAt?: string;
+  /**
+   * Closing line: the fair (mid) price in cents of this leg's side when its game started.
+   * Null once checked and unavailable; undefined until checked.
+   */
+  closePrice?: number | null;
+  /** De-vigged sportsbook win probability for this leg's side; null when no line was found. */
+  bookProb?: number | null;
+  /** Where `bookProb` came from, e.g. "Pinnacle" or "4-book consensus". */
+  bookSource?: string;
 }
 
 export interface BetSlip {
@@ -109,6 +118,8 @@ export interface BetRecord {
   ai: boolean;
   /** AI variance rating, when researched. */
   aiRisk?: RiskLevel;
+  /** The model's probability before calibration, which future calibration fits are built on. */
+  rawProbability?: number;
   /** Decimal odds of the whole ticket as placed (market price, else model fair odds), for ROI. */
   decimalOdds?: number;
   /** Dollars staked on the whole ticket (one stake per parlay, not per leg). */

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { RISK_PROFILES } from "@/lib/bet/engine";
 import { buildInsights, historyContext, legTally, slipLabel, sportsOf } from "@/lib/bet/history";
 import { DEFAULT_WAGER, formatMoney, profitSummary } from "@/lib/bet/pnl";
+import { comboMarkup, ticketClv } from "@/lib/bet/edge";
 import { legTiming, slipTiming, timingTickers, type LegTiming, type SlipTiming } from "@/lib/bet/timing";
 import { cn } from "@/lib/utils";
 import type { BetLeg, BetRecord, LegResult, Outcome } from "@/types/bet";
@@ -414,6 +415,10 @@ export function BetVault({
           {shown.map((r) => {
             const tally = legTally(r.slip);
             const multi = r.slip.legs.length > 1;
+            const clv = ticketClv(r);
+            // A logged combo's paid price stands in when the link carried no quote.
+            const paid = r.imported && multi && !r.slip.comboPrice && r.probability ? Math.round(r.probability * 1000) / 10 : null;
+            const markup = r.outcome === "PENDING" ? comboMarkup(paid ? { ...r.slip, comboPrice: paid } : r.slip) : null;
             const open = expanded.has(r.id);
             return (
               <li key={r.id} className={cn(T.card, "flex flex-col gap-3 p-4 md:flex-row md:items-start")}>
@@ -428,6 +433,26 @@ export function BetVault({
                     </span>
                     {r.ai && <span className="rounded bg-(--accent-deep) px-1.5 py-0.5 text-(--accent)">AI</span>}
                     {r.imported && <span className="rounded bg-[#1E2638] px-1.5 py-0.5">Logged from Kalshi</span>}
+                    {clv && (
+                      <span
+                        title={`Paid ${(clv.entry * 100).toFixed(1)}¢ · fair at kickoff ${(clv.close * 100).toFixed(1)}¢`}
+                        className={cn(
+                          "font-kalshi-bold rounded px-1.5 py-0.5",
+                          clv.clv >= 0 ? "bg-[#00DD94]/12 text-[#00DD94]" : "bg-[#FF3B30]/12 text-[#FF3B30]"
+                        )}
+                      >
+                        CLV {clv.clv >= 0 ? "+" : "−"}
+                        {Math.abs(clv.clv * 100).toFixed(1)}%
+                      </span>
+                    )}
+                    {markup?.steep && (
+                      <span
+                        title={`Combo ${markup.combo}¢ vs legs ${markup.fair.toFixed(1)}¢`}
+                        className="rounded bg-[#FF3B30]/12 px-1.5 py-0.5 text-[#FF3B30]"
+                      >
+                        Combo markup +{markup.cents.toFixed(1)}¢
+                      </span>
+                    )}
                   </div>
                   <p className="font-kalshi-bold mt-1.5 truncate">{slipLabel(r.slip)}</p>
                   {!multi ? (

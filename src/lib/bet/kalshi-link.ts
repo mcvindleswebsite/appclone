@@ -1,5 +1,5 @@
 import { detectSport } from "@/lib/bet/parse-slip";
-import type { BetLeg, KalshiImport, KalshiMarketOption, KalshiSlipImport, Outcome, VaultSettlement } from "@/types/bet";
+import type { BetLeg, BetRecord, KalshiImport, KalshiMarketOption, KalshiSlipImport, Outcome, VaultSettlement } from "@/types/bet";
 
 const LINK = /(?:(?:https?:\/\/)?(?:[\w-]+\.)*kalshi\.com\/|kalshi:\/\/)\S+/gi;
 
@@ -58,6 +58,17 @@ export const settleLegs = (legs: BetLeg[], comboResult: "yes" | "no" | null = nu
   else if (counted.some((l) => l.result === "LOSS")) outcome = "LOSS";
   else if (counted.length > 0 && hit === counted.length) outcome = "WIN";
   return { outcome, legsHit: hit, legsSettled: settled, legsTotal: counted.length };
+};
+
+/**
+ * A saved pick's outcome from its legs. An evaluated straight bet that said BUY NO took the
+ * other side of a leg written as YES, so the leg's result flips for the pick.
+ */
+export const pickOutcome = (record: BetRecord, legs: BetLeg[], comboResult: "yes" | "no" | null = null): Outcome => {
+  const { outcome } = settleLegs(legs, comboResult);
+  const fade = record.slip.legs.length === 1 && record.side === "NO" && !record.slip.legs[0].side;
+  if (!fade || outcome === "PENDING") return outcome;
+  return outcome === "WIN" ? "LOSS" : "WIN";
 };
 
 /** Zero-token settlement lookup through /api/vault/parse-link; throws a readable Error. */

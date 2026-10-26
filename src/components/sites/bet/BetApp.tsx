@@ -1,7 +1,7 @@
 "use client";
 
 import { Brain, Calculator, Cloud, CloudOff, KeyRound, Loader2, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandLogo } from "@/app/bet/components/BrandLogo";
 import {
@@ -12,9 +12,11 @@ import {
   probToAmerican,
   ticketDecimal,
   RISK_PROFILES,
+  type Calibrator,
   type Evaluation,
   type ParlayEvaluation,
 } from "@/lib/bet/engine";
+import { calibration, calibrator, comboMarkup, makerPlan, needsClose } from "@/lib/bet/edge";
 import {
   ACCESS_KEY_STORAGE,
   buildInsights,
@@ -29,13 +31,14 @@ import {
   syncErrorMessage,
   type SyncStatus,
 } from "@/lib/bet/history";
-import { settleKalshi, settleLegs, tickerLink } from "@/lib/bet/kalshi-link";
+import { pickOutcome, settleKalshi, tickerLink } from "@/lib/bet/kalshi-link";
 import { emptyLeg } from "@/lib/bet/parse-slip";
 import { DEFAULT_WAGER, formatMoney, withPnl } from "@/lib/bet/pnl";
 import { cn } from "@/lib/utils";
 import type { BetRecord, BetSlip, Outcome, RiskLevel, SlipAnalysis, SoccerRecommendation } from "@/types/bet";
 
 import { BetVault } from "./BetVault";
+import { EdgeLab } from "./EdgeLab";
 import { KalshiLinkImport } from "./KalshiLinkImport";
 import { LegEditor } from "./LegEditor";
 import { ParlayCard } from "./ParlayCard";
@@ -59,17 +62,19 @@ const toRecord = (
   base: Pick<BetRecord, "id" | "createdAt" | "outcome" | "wager">,
   slip: BetSlip,
   ai: SlipAnalysis | null,
-  risk: RiskLevel
+  risk: RiskLevel,
+  calibrate?: Calibrator
 ): BetRecord => {
   // Payout is sized on the ticket as entered (all legs), whatever the verdict recommends.
   const decimalOdds = ticketDecimal(slip, ai) ?? undefined;
   const common = { ...base, updatedAt: Date.now(), slip, risk, ai: !!ai, aiRisk: ai?.riskScore, decimalOdds };
   if (slip.legs.length === 1) {
-    const e = evaluate(slip.legs[0], risk, ai);
+    const e = evaluate(slip.legs[0], risk, ai, calibrate);
     const side = e.side ?? (e.sides.YES.edge >= e.sides.NO.edge ? "YES" : "NO");
     const s = e.sides[side];
     return withPnl({
       ...common,
+      rawProbability: evaluate(slip.legs[0], risk, ai).sides[side].probability,
       side: e.side,
       verdict: e.verdict === "PASS" ? "PASS" : `${e.verdict} @ ${Math.round(s.price * 100)}¢`,
       probability: s.probability,
@@ -77,10 +82,11 @@ const toRecord = (
       summary: ai?.reasoning ?? `${e.verdict}: ${e.reasons.join(". ")}.`,
     });
   }
-  const p = evaluateParlay(slip, risk, ai);
+  const p = evaluateParlay(slip, risk, ai, calibrate);
   const line = p.trimmed ?? p.full;
   return withPnl({
     ...common,
+    rawProbability: evaluateParlay(slip, risk, ai).full.probability,
     side: null,
     verdict: p.verdict === "PLAY TRIMMED SLIP" ? `PLAY TRIMMED SLIP (${line.indexes.length}/${slip.legs.length} legs)` : p.verdict,
     probability: line.probability,
@@ -138,7 +144,7 @@ const scannerRecord = (slip: BetSlip, rec: SoccerRecommendation, wager: number, 
 };
 
 export function BetApp() {
-  const [tab, setTab] = useState<"evaluate" | "scanner" | "vault">("evaluate");
+  const [tab, setTab] = useState<"evaluate" | "scanner" | "vault" | "edge">("evaluate");
   const [slip, setSlip] = useState<BetSlip>(EMPTY_SLIP);
   const [risk, setRisk] = useState<RiskLevel>(3);
   const [ai, setAi] = useState<SlipAnalysis | null>(null);
@@ -159,9 +165,20 @@ export function BetApp() {
   /** Bumped by every new slip, so a slow research reply for an old slip is discarded. */
   const evalSeq = useRef(0);
 
+  // The AI's track record, applied to new evaluations once there are enough graded picks.
+  const fit = useMemo(() => calibration(records), [records]);
+  const calibrate = calibrator(fit);
   const multi = slip.legs.length > 1;
-  const single: Evaluation = evaluate(slip.legs[0], risk, ai);
-  const parlay: ParlayEvaluation | null = multi ? evaluateParlay(slip, risk, ai) : null;
+  const single: Evaluation = evaluate(slip.legs[0], risk, ai, calibrate);
+  const parlay: ParlayEvaluation | null = multi ? evaluateParlay(slip, risk, ai, calibrate) : null;
+  // Only a researched estimate can disagree with the price; market-only has nothing to bid on.
+  const plan = !multi && ai ? makerPlan(single, risk, slip.legs[0].price !== null) : null;
+  const markup = multi ? comboMarkup(slip) : null;
+  const calibrationNote = calibrate && ai
+    ? `Calibrated from ${fit.n} graded picks: the model's raw 65% counts as ${Math.round(calibrate(0.65) * 100)}%.`
+    : null;
+  /** Whether sharp-book lines are available (ODDS_API_KEY set on the server). */
+  const [booksOn, setBooksOn] = useState<boolean | null>(null);
   const notes = memoryNotes(buildInsights(records), slip);
 
   /** Writes records locally and, when a key is set, mirrors the changed ones to the API store. */
@@ -239,7 +256,7 @@ export function BetApp() {
     if (!accessKey) {
       if (!auto) {
         setNotice("No access key — saved with market pricing only, no research.");
-        const record = toRecord({ ...newRecordBase(), wager: stake }, target, null, risk);
+        const record = toRecord({ ...newRecordBase(), wager: stake }, target, null, risk, calibrate);
         setActiveId(record.id);
         commit([record, ...recordsRef.current], [record]);
       }
@@ -274,10 +291,96 @@ export function BetApp() {
     setAi(result);
     const failed = result.legs.filter((l) => !l.researched).length;
     if (failed) setNotice(`Research failed for ${failed} leg${failed > 1 ? "s" : ""} — those are rated on price alone.`);
-    const record = toRecord({ ...newRecordBase(), wager: stake }, target, result, risk);
+    const record = toRecord({ ...newRecordBase(), wager: stake }, target, result, risk, calibrate);
     setActiveId(record.id);
     commit([record, ...recordsRef.current], [record]);
   };
+
+  // Sharp sportsbook lines for game-winner legs, fetched once per leg (null = none found).
+  useEffect(() => {
+    const want = slip.legs.filter((l) => l.ticker && l.bookProb === undefined && l.matchup && l.pick);
+    if (!want.length) return;
+    let cancelled = false;
+    fetch("/api/bet/odds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        legs: want.map((l) => ({ ticker: l.ticker, matchup: l.matchup, pick: l.pick, side: l.side, startsAt: l.startsAt })),
+      }),
+    })
+      .then((r) => (r.ok ? (r.json() as Promise<{ configured: boolean; lines: Record<string, { fair: number; source: string }> }>) : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setBooksOn(data.configured);
+        const asked = new Set(want.map((l) => l.ticker));
+        setSlip((prev) => ({
+          ...prev,
+          legs: prev.legs.map((l) =>
+            l.ticker && asked.has(l.ticker) && l.bookProb === undefined
+              ? { ...l, bookProb: data.lines[l.ticker]?.fair ?? null, bookSource: data.lines[l.ticker]?.source }
+              : l
+          ),
+        }));
+      })
+      .catch(() => {
+        // No book line this time; the leg is priced on Kalshi alone.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slip.legs]);
+
+  // Closing lines for CLV: once a logged leg's game has started, read Kalshi's fair price at
+  // kickoff and save it on the leg. Re-checks every 10 minutes while the page is open.
+  const clvChecked = useRef(new Set<string>());
+  useEffect(() => {
+    if (!booted) return;
+    const run = () => {
+      const now = Date.now();
+      const want = new Set<string>();
+      for (const r of recordsRef.current) {
+        for (const l of r.slip.legs) {
+          if (!needsClose(l) || clvChecked.current.has(l.ticker!)) continue;
+          const started = l.startsAt ? Date.parse(l.startsAt) <= now : r.outcome !== "PENDING" || now - r.createdAt > 3 * 3600_000;
+          if (started) want.add(l.ticker!);
+        }
+      }
+      const tickers = [...want].slice(0, 40);
+      if (!tickers.length) return;
+      tickers.forEach((t) => clvChecked.current.add(t));
+      fetch("/api/vault/clv", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tickers }),
+      })
+        .then((r) => (r.ok ? (r.json() as Promise<{ lines: Record<string, { status: string; yes: number | null }> }>) : null))
+        .then((data) => {
+          if (!data) throw new Error("No closing lines");
+          const changed: BetRecord[] = [];
+          const next = recordsRef.current.map((r) => {
+            let touched = false;
+            const legs = r.slip.legs.map((l) => {
+              const line = l.ticker ? data.lines[l.ticker] : undefined;
+              if (!line || line.status === "upcoming" || !needsClose(l)) return l;
+              touched = true;
+              const yes = line.yes;
+              return { ...l, closePrice: yes === null ? null : Math.round((l.side === "no" ? 100 - yes : yes) * 10) / 10 };
+            });
+            if (!touched) return r;
+            const updated = { ...r, updatedAt: Date.now(), slip: { ...r.slip, legs } };
+            changed.push(updated);
+            return updated;
+          });
+          if (changed.length) commit(next, changed);
+          // Games that haven't started get checked again on a later pass.
+          for (const [t, line] of Object.entries(data.lines)) if (line.status === "upcoming") clvChecked.current.delete(t);
+        })
+        .catch(() => tickers.forEach((t) => clvChecked.current.delete(t)));
+    };
+    run();
+    const timer = setInterval(run, 10 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [booted, records.length, commit]);
 
   // Latest runner for the memoized import callbacks below.
   const latest = useRef({ run: runEvaluation });
@@ -320,7 +423,7 @@ export function BetApp() {
     setRisk(next);
     const existing = recordsRef.current.find((r) => r.id === activeId);
     if (!existing) return;
-    const updated = toRecord(existing, slip, ai, next);
+    const updated = toRecord(existing, slip, ai, next, calibrate);
     commit(recordsRef.current.map((r) => (r.id === existing.id ? updated : r)), [updated]);
   };
 
@@ -400,7 +503,7 @@ export function BetApp() {
           const data = await settleKalshi(tickers.map(tickerLink).join("\n"));
           const results = new Map(data.legs.map((l) => [l.ticker, l.result]));
           const legs = r.slip.legs.map((l) => (l.ticker && results.has(l.ticker) ? { ...l, result: results.get(l.ticker) } : l));
-          const outcome = r.slip.comboTicker ? data.outcome : settleLegs(legs).outcome;
+          const outcome = r.slip.comboTicker ? data.outcome : pickOutcome(r, legs);
           const changed = outcome !== "PENDING" || legs.some((l, i) => l.result !== r.slip.legs[i].result);
           if (!changed) return;
           if (outcome !== "PENDING") newlySettled++;
@@ -469,6 +572,7 @@ export function BetApp() {
                 ["evaluate", "Evaluate", null],
                 ["scanner", "Top Picks", null],
                 ["vault", "Vault", records.length || null],
+                ["edge", "Edge", null],
               ] as const
             ).map(([id, label, count]) => (
               <button
@@ -533,6 +637,8 @@ export function BetApp() {
       <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
         {tab === "scanner" ? (
           <Scanner accessKey={accessKey} keyBroken={keyBroken} onImport={importRecommendation} onLog={logRecommendation} />
+        ) : tab === "edge" ? (
+          <EdgeLab records={records} calibration={fit} />
         ) : tab === "vault" ? (
           <BetVault
             records={records}
@@ -645,6 +751,10 @@ export function BetApp() {
                   risk={risk}
                   researching={running}
                   hasKey={!!accessKey}
+                  markup={markup}
+                  calibrationNote={calibrationNote}
+                  // A quote changes the price, not the legs, so research stays.
+                  onComboPrice={(cents) => setSlip((prev) => ({ ...prev, comboPrice: cents }))}
                 />
               ) : (
                 <div className={cn(T.card, "flex flex-col gap-5 p-4 sm:p-5")}>
@@ -708,6 +818,25 @@ export function BetApp() {
                       </div>
                     </div>
 
+                    {typeof leg.bookProb === "number" && leg.price !== null && (
+                      <p className={cn(T.inset, "px-3 py-2 text-xs")}>
+                        <span className={T.muted}>Sharp books ({leg.bookSource}): </span>
+                        <span className="font-kalshi-bold">{pct(leg.bookProb)} fair</span>
+                        <span className={T.muted}> vs Kalshi {leg.price}¢ · </span>
+                        <span className={cn("font-kalshi-bold", leg.bookProb * 100 - leg.price >= 0 ? T.yes : T.no)}>
+                          {leg.bookProb * 100 - leg.price >= 0 ? "+" : ""}
+                          {(leg.bookProb * 100 - leg.price).toFixed(1)} pts
+                        </span>
+                        <span className={T.muted}> for YES (blended into Market)</span>
+                      </p>
+                    )}
+                    {booksOn === false && leg.ticker && /GAME-/.test(leg.ticker) && (
+                      <p className={cn("text-[11px]", T.muted)}>
+                        Sharp-book comparison is off: set ODDS_API_KEY (free at the-odds-api.com) on the server.
+                      </p>
+                    )}
+                    {calibrationNote && <p className={cn("text-[11px]", T.muted)}>{calibrationNote}</p>}
+
                     <div className="grid grid-cols-2 gap-3">
                       {(["YES", "NO"] as const).map((side) => {
                         const s = single.sides[side];
@@ -738,6 +867,28 @@ export function BetApp() {
                       })}
                     </div>
                     </>
+                  )}
+
+                  {plan && (
+                    <div className={cn(T.inset, "flex flex-col gap-1 p-3 text-xs", plan.unlocks && "border-(--accent)/50")}>
+                      <p className={T.label}>Limit Order Plan</p>
+                      <p className="text-[#F5F7F4]/90">
+                        Post a limit buy on <span className="font-kalshi-bold">{plan.side}</span> at{" "}
+                        <span className="font-kalshi-bold text-white">{plan.limit}¢</span>
+                        {plan.limit < plan.ask ? ` (ask is ${plan.ask}¢)` : ""} and never pay more than {plan.maxPrice}¢.
+                      </p>
+                      <p className={T.muted}>
+                        Resting orders skip most of the taker fee (saves ~{plan.feeSaved.toFixed(1)}¢ a contract). Edge if it
+                        fills: <span className={plan.makerEdge >= 0 ? T.yes : T.no}>{pts(plan.makerEdge)} pts</span> vs{" "}
+                        {pts(plan.takerEdge)} taking now.
+                      </p>
+                      {plan.unlocks && (
+                        <p className={T.yes}>
+                          Taking at the ask misses your edge minimum, but a filled limit order clears it (other checks above
+                          still apply).
+                        </p>
+                      )}
+                    </div>
                   )}
 
                   <ul className="flex flex-col gap-1.5 text-sm">

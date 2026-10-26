@@ -3,6 +3,7 @@
 import { AlertTriangle, Check, Copy, Link2, Loader2 } from "lucide-react";
 import { useState } from "react";
 
+import type { ComboMarkup } from "@/lib/bet/edge";
 import { formatAmerican, RISK_PROFILES, type ParlayEvaluation, type SlipLine } from "@/lib/bet/engine";
 import { cn } from "@/lib/utils";
 import type { BetSlip, LegRating, RiskLevel, SlipAnalysis } from "@/types/bet";
@@ -52,6 +53,9 @@ export function ParlayCard({
   risk,
   researching,
   hasKey,
+  markup,
+  calibrationNote,
+  onComboPrice,
 }: {
   slip: BetSlip;
   analysis: SlipAnalysis | null;
@@ -59,7 +63,12 @@ export function ParlayCard({
   risk: RiskLevel;
   researching: boolean;
   hasKey: boolean;
+  markup: ComboMarkup | null;
+  calibrationNote: string | null;
+  /** Sets the combo price Kalshi quotes (combos are priced on request, so links often lack one). */
+  onComboPrice: (cents: number | null) => void;
 }) {
+  const legsFair = slip.legs.every((l) => l.price) ? slip.legs.reduce((p, l) => p * ((l.price as number) / 100), 1) * 100 : null;
   const [copied, setCopied] = useState(false);
   const recommended = parlay.verdict === "PLAY TRIMMED SLIP" ? parlay.trimmed : parlay.verdict === "PLAY FULL SLIP" ? parlay.full : null;
 
@@ -122,6 +131,51 @@ export function ParlayCard({
         </div>
       )}
 
+      {legsFair !== null && (
+        <label className="flex items-center gap-2 text-xs">
+          <span className={T.muted}>Kalshi combo quote</span>
+          <input
+            inputMode="decimal"
+            defaultValue={slip.comboPrice ?? ""}
+            key={slip.comboTicker ?? slip.legs.map((l) => l.ticker).join()}
+            onChange={(e) => {
+              const n = Number(e.target.value.replace(/[^\d.]/g, ""));
+              onComboPrice(n >= 0.1 && n <= 99 ? n : null);
+            }}
+            placeholder="¢"
+            aria-label="Combo price Kalshi quotes, in cents"
+            className={cn(T.input, "w-20 tabular-nums sm:min-h-8")}
+          />
+          {!markup && (
+            <span className={T.muted}>legs multiply to {legsFair.toFixed(1)}¢; enter the quote to check its markup</span>
+          )}
+        </label>
+      )}
+      {markup && (
+        <div
+          className={cn(
+            "flex gap-2 rounded-lg border px-3 py-2 text-xs",
+            markup.steep ? "border-[#FF3B30]/40 bg-[#FF3B30]/10" : "border-[#1E2638] bg-[#050D0A]"
+          )}
+        >
+          {markup.steep ? (
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[#FF3B30]" />
+          ) : (
+            <Check className="mt-0.5 size-3.5 shrink-0 text-(--accent)" />
+          )}
+          <span className="text-[#F5F7F4]/85">
+            <span className="font-kalshi-bold">
+              Combo markup {markup.cents >= 0 ? "+" : ""}
+              {markup.cents.toFixed(1)}¢ ({markup.ratio >= 0 ? "+" : ""}
+              {(markup.ratio * 100).toFixed(0)}%)
+            </span>{" "}
+            — the combo costs {markup.combo}¢; its legs&apos; own prices multiply to {markup.fair.toFixed(1)}¢.
+            {markup.steep ? " You're paying a premium for the bundle." : " Fairly priced against its legs."}
+          </span>
+        </div>
+      )}
+      {calibrationNote && <p className="text-[11px] text-[#F5F7F4]/50">{calibrationNote}</p>}
+
       {analysis && analysis.correlations.length > 0 && (
         <ul className="flex flex-col gap-1.5">
           {analysis.correlations.map((c, i) => (
@@ -158,6 +212,17 @@ export function ParlayCard({
               <div className="flex items-center gap-2">
                 <span className="font-kalshi-bold w-5 shrink-0 text-xs text-[#F5F7F4]/50">{l.index + 1}</span>
                 <p className="min-w-0 flex-1 truncate text-sm">{l.leg.market || l.leg.pick || "Untitled leg"}</p>
+                {typeof l.leg.bookProb === "number" && (
+                  <span
+                    title={`De-vigged ${l.leg.bookSource} line`}
+                    className={cn(
+                      "shrink-0 text-[11px] tabular-nums",
+                      l.leg.price && l.leg.bookProb * 100 > l.leg.price ? T.yes : "text-[#F5F7F4]/45"
+                    )}
+                  >
+                    books {Math.round(l.leg.bookProb * 100)}%
+                  </span>
+                )}
                 <span className="shrink-0 text-xs tabular-nums text-[#F5F7F4]/60">
                   {l.leg.price ? `${l.leg.price}¢` : l.leg.americanOdds ? formatAmerican(l.leg.americanOdds) : "no price"}
                 </span>

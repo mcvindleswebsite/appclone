@@ -1,5 +1,5 @@
 import { resolveKalshiLinks } from "@/lib/bet/kalshi-api";
-import { settleLegs, tickerLink } from "@/lib/bet/kalshi-link";
+import { pickOutcome, tickerLink } from "@/lib/bet/kalshi-link";
 import { withPnl } from "@/lib/bet/pnl";
 import type { BetRecord } from "@/types/bet";
 
@@ -30,7 +30,7 @@ export const settleRecord = async (r: BetRecord): Promise<BetRecord | null> => {
   // A combo link resolves to its own legs, which may not carry the stored legs' tickers.
   const comboLegs = r.slip.comboTicker && !r.slip.legs.some((l) => l.ticker && results.has(l.ticker)) ? data.legs : null;
   const nextLegs = comboLegs ?? legs;
-  const { outcome } = settleLegs(nextLegs, r.slip.comboTicker ? data.comboResult : null);
+  const outcome = pickOutcome(r, nextLegs, r.slip.comboTicker ? data.comboResult : null);
 
   const changed = outcome !== r.outcome || nextLegs.some((l, i) => l.result !== r.slip.legs[i]?.result);
   if (!changed) return null;
