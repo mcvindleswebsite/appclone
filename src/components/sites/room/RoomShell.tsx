@@ -4,8 +4,17 @@ import { useMemo, useRef, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
+import type { ShelfSpot } from "./designEngine";
 import { COLORS, ROOM } from "./roomData";
-import { blindsTexture, noiseTexture } from "./textures";
+import {
+  blindsTexture,
+  chalkboardTexture,
+  jerseyTexture,
+  noiseTexture,
+  pennantTexture,
+  plateTexture,
+  xmenPosterTexture,
+} from "./textures";
 
 const W = ROOM.width;
 const D = ROOM.depth;
@@ -55,25 +64,37 @@ function Wall({
 }
 
 function Ceiling() {
-  const ref = useRef<THREE.Mesh>(null);
+  const ref = useRef<THREE.Group>(null);
   const tex = useMemo(() => noiseTexture(COLORS.ceiling, ["#f7f5ef", "#dcd8ce", "#e6e2d8"], 3, [6, 6]), []);
   useFrame(({ camera }) => {
     if (ref.current) ref.current.visible = camera.position.y < H;
   });
   return (
-    <mesh ref={ref} position={[0, H, 0]} rotation={[Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[W, D]} />
-      <meshStandardMaterial map={tex} roughness={1} />
-    </mesh>
+    <group ref={ref}>
+      <mesh position={[0, H, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[W, D]} />
+        <meshStandardMaterial map={tex} roughness={1} />
+      </mesh>
+      {/* Recessed can lights seen in IMG_7442 / IMG_7444 */}
+      {[
+        [0.15, -0.35],
+        [0.9, 0.9],
+      ].map(([x, z]) => (
+        <mesh key={`${x}-${z}`} position={[x, H - 0.002, z]} rotation={[Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[0.07, 24]} />
+          <meshStandardMaterial color="#d8d2c2" emissive="#fff3d6" emissiveIntensity={0.4} />
+        </mesh>
+      ))}
+    </group>
   );
 }
 
-function Floor() {
+function Floor({ turf }: { turf: boolean }) {
   const carpet = useMemo(
     () => noiseTexture(COLORS.carpet, ["#4a3d30", "#6a5947", "#544636", "#72604c"], 11, [8, 9]),
     [],
   );
-  const turf = useMemo(
+  const turfTex = useMemo(
     () => noiseTexture(COLORS.turf, ["#3c7a2c", "#24501b", "#46862f", "#2a5a1f"], 23, [6, 6], true),
     [],
   );
@@ -84,22 +105,71 @@ function Floor() {
         <planeGeometry args={[W, D]} />
         <meshStandardMaterial map={carpet} roughness={1} />
       </mesh>
-      {/* Artificial-turf rug covering the middle of the room */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0.45, 0.004, -0.4]} receiveShadow>
-        <planeGeometry args={[2.3, 2.2]} />
-        <meshStandardMaterial map={turf} roughness={1} />
+      {turf && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0.45, 0.004, -0.4]} receiveShadow>
+          <planeGeometry args={[2.3, 2.2]} />
+          <meshStandardMaterial map={turfTex} roughness={1} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function Picture({
+  texture,
+  size,
+  position,
+  transparent = false,
+}: {
+  texture: THREE.Texture;
+  size: [number, number];
+  position: [number, number, number];
+  transparent?: boolean;
+}) {
+  return (
+    <mesh position={position} castShadow={!transparent}>
+      <planeGeometry args={size} />
+      <meshStandardMaterial map={texture} transparent={transparent} alphaTest={transparent ? 0.5 : 0} roughness={0.8} />
+    </mesh>
+  );
+}
+
+function FloatingShelf({ length }: { length: number }) {
+  // Suggested addition: oak shelf with a small plant and a gold-spined book.
+  return (
+    <group position={[0, 1.45, 0]}>
+      <mesh position={[0, 0, 0.11]} castShadow receiveShadow>
+        <boxGeometry args={[length, 0.04, 0.22]} />
+        <meshStandardMaterial color="#b08a5a" roughness={0.55} />
+      </mesh>
+      <mesh position={[-length / 2 + 0.12, 0.08, 0.11]} castShadow>
+        <cylinderGeometry args={[0.055, 0.045, 0.12, 20]} />
+        <meshStandardMaterial color="#efe9dc" roughness={0.7} />
+      </mesh>
+      <mesh position={[-length / 2 + 0.12, 0.18, 0.11]} castShadow>
+        <sphereGeometry args={[0.075, 16, 12]} />
+        <meshStandardMaterial color="#4f7a3a" roughness={0.9} />
+      </mesh>
+      <mesh position={[length / 2 - 0.16, 0.1, 0.11]} castShadow>
+        <boxGeometry args={[0.16, 0.16, 0.12]} />
+        <meshStandardMaterial color={COLORS.bocaGold} roughness={0.6} />
+      </mesh>
+      <mesh position={[length / 2 - 0.3, 0.12, 0.13]} castShadow>
+        <boxGeometry args={[0.1, 0.2, 0.02]} />
+        <meshStandardMaterial color={COLORS.bocaNavy} roughness={0.6} />
       </mesh>
     </group>
   );
 }
 
-function NorthWall() {
-  // Window wall (IMG_7442): blinds and olive blackout curtains.
+function NorthWall({ shelf }: { shelf: ShelfSpot | null }) {
+  // Window wall (IMG_7442): blinds, olive curtains, Boca pennant, X-Men poster.
   const blinds = useMemo(() => blindsTexture(), []);
+  const pennant = useMemo(() => pennantTexture(), []);
+  const poster = useMemo(() => xmenPosterTexture(), []);
   const winX = -0.05;
   return (
     <Wall position={[0, 0, -D / 2]} rotationY={0} width={W}>
-      {/* Window glow + blinds + sill */}
       <mesh position={[winX, 1.5, 0.004]}>
         <planeGeometry args={[0.95, 1.1]} />
         <meshBasicMaterial color={COLORS.windowGlow} toneMapped={false} />
@@ -112,12 +182,10 @@ function NorthWall() {
         <boxGeometry args={[1.05, 0.03, 0.06]} />
         <meshStandardMaterial color={COLORS.trim} />
       </mesh>
-      {/* Curtain rod */}
       <mesh position={[winX, 2.17, 0.09]} rotation={[0, 0, Math.PI / 2]}>
         <cylinderGeometry args={[0.012, 0.012, 1.75, 12]} />
         <meshStandardMaterial color="#2a2a2a" metalness={0.6} roughness={0.4} />
       </mesh>
-      {/* Two olive curtain panels, pleated */}
       {[winX - 0.62, winX + 0.66].map((cx, i) => (
         <group key={cx} position={[cx, 1.2, 0.09]}>
           {Array.from({ length: 6 }, (_, k) => (
@@ -128,12 +196,20 @@ function NorthWall() {
           ))}
         </group>
       ))}
+      <Picture texture={pennant} size={[0.4, 0.48]} position={[0.92, 1.58, 0.01]} transparent />
+      <Picture texture={poster} size={[0.4, 0.54]} position={[1.36, 1.68, 0.01]} />
+      {shelf?.wall === "north" && (
+        <group position={[shelf.localX, 0, 0]}>
+          <FloatingShelf length={shelf.length} />
+        </group>
+      )}
     </Wall>
   );
 }
 
-function EastWall() {
+function EastWall({ shelf }: { shelf: ShelfSpot | null }) {
   // Sliding closet with chalkboard-painted doors (IMG_7444).
+  const board = useMemo(() => chalkboardTexture(), []);
   return (
     <Wall position={[W / 2, 0, 0]} rotationY={-Math.PI / 2} width={D}>
       <mesh position={[-0.25, 1.06, 0.01]}>
@@ -142,20 +218,25 @@ function EastWall() {
       </mesh>
       <mesh position={[-0.25, 1.03, 0.025]} receiveShadow>
         <boxGeometry args={[1.8, 2.05, 0.02]} />
-        <meshStandardMaterial color="#1d201f" roughness={0.9} />
+        <meshStandardMaterial map={board} roughness={0.9} />
       </mesh>
-      {/* Door seam */}
       <mesh position={[-0.25, 1.03, 0.037]}>
         <boxGeometry args={[0.02, 2.05, 0.004]} />
         <meshStandardMaterial color="#cfcac0" metalness={0.4} />
       </mesh>
+      {shelf?.wall === "east" && (
+        <group position={[shelf.localX, 0, 0]}>
+          <FloatingShelf length={shelf.length} />
+        </group>
+      )}
     </Wall>
   );
 }
 
-function SouthWall() {
+function SouthWall({ shelf }: { shelf: ShelfSpot | null }) {
   // Entry door + two floating espresso shelves above the bed (IMG_7443).
   // On this wall local x = −world x.
+  const plate = useMemo(() => plateTexture(), []);
   const doorX = -0.95;
   const shelfX = 0.15;
   return (
@@ -168,7 +249,6 @@ function SouthWall() {
         <boxGeometry args={[0.8, 2.0, 0.03]} />
         <meshStandardMaterial color="#f6f4ee" roughness={0.5} />
       </mesh>
-      {/* Six raised panels */}
       {[
         [-0.17, 1.55],
         [0.17, 1.55],
@@ -193,19 +273,65 @@ function SouthWall() {
           <meshStandardMaterial color="#2a1d18" roughness={0.6} />
         </mesh>
       ))}
+      {/* Top shelf: boxed collectibles and two Funko figures */}
+      {[
+        [-0.2, "#2f3b2f", 0.18],
+        [-0.02, "#3c3c58", 0.22],
+        [0.32, "#4a4426", 0.16],
+      ].map(([x, color, h]) => (
+        <mesh key={String(x)} position={[shelfX + Number(x), 1.575 + Number(h) / 2, 0.12]} castShadow>
+          <boxGeometry args={[0.13, Number(h), 0.03]} />
+          <meshStandardMaterial color={String(color)} />
+        </mesh>
+      ))}
+      {[0.06, 0.13].map((x) => (
+        <mesh key={x} position={[shelfX + x, 1.62, 0.13]} castShadow>
+          <cylinderGeometry args={[0.025, 0.025, 0.08, 12]} />
+          <meshStandardMaterial color={x < 0.1 ? "#f0f0f0" : "#c22c2c"} />
+        </mesh>
+      ))}
+      {/* License plate under the top shelf and a framed print on the lower one */}
+      <mesh position={[shelfX - 0.15, 1.46, 0.02]}>
+        <planeGeometry args={[0.36, 0.085]} />
+        <meshStandardMaterial map={plate} roughness={0.4} metalness={0.2} />
+      </mesh>
+      <mesh position={[shelfX + 0.18, 1.33, 0.04]}>
+        <boxGeometry args={[0.24, 0.26, 0.015]} />
+        <meshStandardMaterial color="#8fa6b0" />
+      </mesh>
+      {shelf?.wall === "south" && (
+        <group position={[shelf.localX, 0, 0]}>
+          <FloatingShelf length={shelf.length} />
+        </group>
+      )}
     </Wall>
   );
 }
 
-export function RoomShell() {
+function WestWall({ shelf }: { shelf: ShelfSpot | null }) {
+  // Quilmes / Maradona jersey (IMG_7442). On this wall local x = −world z.
+  const jersey = useMemo(() => jerseyTexture(), []);
+  return (
+    <Wall position={[-W / 2, 0, 0]} rotationY={Math.PI / 2} width={D}>
+      <Picture texture={jersey} size={[0.6, 0.66]} position={[-0.15, 1.72, 0.012]} transparent />
+      {shelf?.wall === "west" && (
+        <group position={[shelf.localX, 0, 0]}>
+          <FloatingShelf length={shelf.length} />
+        </group>
+      )}
+    </Wall>
+  );
+}
+
+export function RoomShell({ turf, shelf }: { turf: boolean; shelf: ShelfSpot | null }) {
   return (
     <group>
-      <Floor />
+      <Floor turf={turf} />
       <Ceiling />
-      <NorthWall />
-      <EastWall />
-      <SouthWall />
-      <Wall position={[-W / 2, 0, 0]} rotationY={Math.PI / 2} width={D} />
+      <NorthWall shelf={shelf} />
+      <EastWall shelf={shelf} />
+      <SouthWall shelf={shelf} />
+      <WestWall shelf={shelf} />
     </group>
   );
 }

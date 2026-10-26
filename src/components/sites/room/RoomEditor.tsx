@@ -8,9 +8,23 @@ import { Grid3x3, Orbit, RotateCcw, RotateCw, Ruler, ScanEye } from "lucide-reac
 
 import { cn } from "@/lib/utils";
 
+import { DesignPanel } from "./DesignPanel";
+import {
+  analyze,
+  bestRugPlacement,
+  blankestWall,
+  darkestCorner,
+  optimizeLayout,
+  suggestAdditions,
+  type ItemReport,
+  type SceneOptions,
+  type SuggestionId,
+} from "./designEngine";
 import { FurnitureModel } from "./FurnitureModels";
 import { RoomShell } from "./RoomShell";
 import {
+  ADDITIONS,
+  ALL_ITEMS,
   FURNITURE,
   GRID_STEP,
   INITIAL_LAYOUT,
@@ -20,11 +34,16 @@ import {
   type Layout,
   type Placement,
 } from "./roomData";
+import { FEEDBACK_COLORS, ZonesOverlay } from "./ZonesOverlay";
 
 type View = "orbit" | "top";
 type Controls = ComponentRef<typeof OrbitControls>;
+type Added = Record<SuggestionId, boolean>;
 
-const STORAGE_KEY = "room-layout-v1";
+const LAYOUT_KEY = "room-layout-v1";
+const ADDED_KEY = "room-additions-v1";
+const NO_ADDITIONS: Added = { areaRug: false, uplight: false, accentTextiles: false, floatingShelf: false };
+const SELECT_COLOR = "#7dd3fc";
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const ORBIT_POS = new THREE.Vector3(3.4, 3.6, 4.6);
 const ORBIT_TARGET = new THREE.Vector3(-0.1, 0.7, -0.2);
@@ -34,9 +53,9 @@ const TOP_TARGET = new THREE.Vector3(0, 0, 0);
 function loadLayout(): Layout {
   const layout: Layout = { ...INITIAL_LAYOUT };
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<Layout> | null;
+    const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null") as Partial<Layout> | null;
     if (saved) {
-      for (const item of FURNITURE) {
+      for (const item of ALL_ITEMS) {
         const p = saved[item.id];
         if (p && Number.isFinite(p.x) && Number.isFinite(p.z) && Number.isInteger(p.turns)) {
           layout[item.id] = { x: p.x, z: p.z, turns: ((p.turns % 4) + 4) % 4 };
@@ -49,6 +68,18 @@ function loadLayout(): Layout {
   return layout;
 }
 
+function loadAdded(): Added {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ADDED_KEY) ?? "null") as Partial<Added> | null;
+    if (saved) {
+      return Object.fromEntries(Object.keys(NO_ADDITIONS).map((k) => [k, saved[k as SuggestionId] === true])) as Added;
+    }
+  } catch {
+    // Ignore unreadable storage.
+  }
+  return NO_ADDITIONS;
+}
+
 const cm = (m: number) => Math.round(m * 100);
 
 function setControlsEnabled(get: () => RootState, enabled: boolean) {
@@ -59,17 +90,23 @@ function setControlsEnabled(get: () => RootState, enabled: boolean) {
 function DraggableItem({
   item,
   placement,
+  report,
   selected,
   showDims,
+  accentTextiles,
   onSelect,
   onMove,
+  onDragChange,
 }: {
   item: FurnitureItem;
   placement: Placement;
+  report: ItemReport | undefined;
   selected: boolean;
   showDims: boolean;
+  accentTextiles: boolean;
   onSelect: (id: string) => void;
   onMove: (id: string, x: number, z: number) => void;
+  onDragChange: (dragging: boolean) => void;
 }) {
   const group = useRef<THREE.Group>(null);
   const drag = useRef<{ ox: number; oz: number } | null>(null);
@@ -99,9 +136,13 @@ function DraggableItem({
     (e.target as unknown as Element).releasePointerCapture(e.pointerId);
     setControlsEnabled(get, true);
     document.body.style.cursor = "grab";
+    onDragChange(false);
   };
 
   const { w, d, h } = item.size;
+  const status = report?.status ?? "neutral";
+  const feedback = status === "neutral" ? null : FEEDBACK_COLORS[status];
+  const outline = selected ? (feedback ?? SELECT_COLOR) : feedback;
 
   return (
     <group
@@ -118,6 +159,7 @@ function DraggableItem({
         // OrbitControls reads `enabled` synchronously on the same DOM event, so flip it here.
         setControlsEnabled(get, false);
         document.body.style.cursor = "grabbing";
+        onDragChange(true);
       }}
       onPointerMove={(e) => {
         if (!drag.current) return;
@@ -135,20 +177,26 @@ function DraggableItem({
         if (!drag.current) document.body.style.cursor = "auto";
       }}
     >
-      <FurnitureModel kind={item.kind} />
+      <FurnitureModel item={item} accentTextiles={accentTextiles} />
 
-      {selected && (
-        <>
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.013, 0]} raycast={() => null}>
-            <planeGeometry args={[w + 0.08, d + 0.08]} />
-            <meshBasicMaterial color="#7dd3fc" transparent opacity={0.22} depthWrite={false} />
-          </mesh>
-          <mesh position={[0, h / 2 + 0.01, 0]} raycast={() => null}>
-            <boxGeometry args={[w + 0.03, h + 0.02, d + 0.03]} />
-            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-            <Edges color="#7dd3fc" />
-          </mesh>
-        </>
+      {/* Spatial feedback: red footprint in tight/blocked spots, green in harmony zones. */}
+      {(feedback || selected) && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} raycast={() => null}>
+          <planeGeometry args={[w + 0.08, d + 0.08]} />
+          <meshBasicMaterial
+            color={outline ?? SELECT_COLOR}
+            transparent
+            opacity={selected ? 0.3 : 0.22}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+      {outline && (selected || status === "bad") && (
+        <mesh position={[0, h / 2 + 0.01, 0]} raycast={() => null}>
+          <boxGeometry args={[w + 0.03, h + 0.02, d + 0.03]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+          <Edges color={outline} />
+        </mesh>
       )}
 
       {(selected || showDims) && (
@@ -156,7 +204,10 @@ function DraggableItem({
           <div
             className={cn(
               "whitespace-nowrap rounded-md px-2 py-1 text-center font-mono text-[10px] leading-tight backdrop-blur-md",
-              selected ? "bg-sky-400/90 text-slate-950" : "bg-black/55 text-white/85",
+              !selected && "bg-black/55 text-white/85",
+              selected && status === "bad" && "bg-[#FF3B30]/90 text-white",
+              selected && status === "good" && "bg-[#00DD94]/90 text-[#050D0A]",
+              selected && status === "neutral" && "bg-sky-400/90 text-slate-950",
             )}
           >
             {selected && <div className="font-sans text-[11px] font-semibold">{item.label}</div>}
@@ -249,19 +300,57 @@ function ToolButton({
 
 export function RoomEditor() {
   const [layout, setLayout] = useState<Layout>(loadLayout);
+  const [added, setAdded] = useState<Added>(loadAdded);
   const [selected, setSelected] = useState<string | null>(null);
   const [snap, setSnap] = useState(true);
   const [showDims, setShowDims] = useState(false);
   const [view, setView] = useState<View>("orbit");
+  const [panelOpen, setPanelOpen] = useState(() => window.innerWidth >= 640);
+  const [showZones, setShowZones] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+  const [undoLayout, setUndoLayout] = useState<Layout | null>(null);
+  const [lastMoved, setLastMoved] = useState<number | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
   }, [layout]);
+  useEffect(() => {
+    localStorage.setItem(ADDED_KEY, JSON.stringify(added));
+  }, [added]);
+
+  // Additions join the scene once they have a placement.
+  const items = useMemo(
+    () => [...FURNITURE, ...ADDITIONS.filter((a) => added[a.id as SuggestionId] && layout[a.id])],
+    [added, layout],
+  );
+  const opts = useMemo<SceneOptions>(
+    () => ({ accentTextiles: added.accentTextiles, floatingShelf: added.floatingShelf }),
+    [added.accentTextiles, added.floatingShelf],
+  );
+  const analysis = useMemo(() => analyze(items, layout, opts), [items, layout, opts]);
+  // Rank suggestions once so cards don't reshuffle under the cursor as the room changes.
+  const [suggestionOrder] = useState(() => suggestAdditions(analysis, items, layout).map((s) => s.id));
+  const suggestions = useMemo(
+    () =>
+      suggestAdditions(analysis, items, layout).sort(
+        (a, b) => suggestionOrder.indexOf(a.id) - suggestionOrder.indexOf(b.id),
+      ),
+    [analysis, items, layout, suggestionOrder],
+  );
+  const shelf = useMemo(() => (added.floatingShelf ? blankestWall() : null), [added.floatingShelf]);
+
+  const manualEdit = () => {
+    setUndoLayout(null);
+    setLastMoved(null);
+  };
 
   const move = useCallback(
     (id: string, x: number, z: number) => {
-      const item = FURNITURE.find((f) => f.id === id);
+      const item = ALL_ITEMS.find((f) => f.id === id);
       if (!item) return;
+      setUndoLayout(null);
+      setLastMoved(null);
       setLayout((prev) => {
         const p = prev[id];
         const next = constrain(item, x, z, p.turns, snap);
@@ -274,14 +363,51 @@ export function RoomEditor() {
 
   const rotateSelected = useCallback(() => {
     if (!selected) return;
-    const item = FURNITURE.find((f) => f.id === selected);
+    const item = ALL_ITEMS.find((f) => f.id === selected);
     if (!item) return;
+    setUndoLayout(null);
+    setLastMoved(null);
     setLayout((prev) => {
       const p = prev[selected];
       const turns = (p.turns + 1) % 4;
       return { ...prev, [selected]: { turns, ...constrain(item, p.x, p.z, turns, snap) } };
     });
   }, [selected, snap]);
+
+  const optimize = () => {
+    setOptimizing(true);
+    // Yield a frame so the button can show its busy state before the search runs.
+    window.setTimeout(() => {
+      const next = optimizeLayout(items, layout, opts);
+      const moved = items.filter((i) => {
+        const a = layout[i.id];
+        const b = next[i.id];
+        return a && b && (Math.abs(a.x - b.x) > 0.01 || Math.abs(a.z - b.z) > 0.01 || a.turns !== b.turns);
+      }).length;
+      setUndoLayout(layout);
+      setLayout(next);
+      setLastMoved(moved);
+      setOptimizing(false);
+    }, 30);
+  };
+
+  const toggleAddition = (id: SuggestionId) => {
+    const on = !added[id];
+    setAdded((prev) => ({ ...prev, [id]: on }));
+    if (!on) {
+      if (selected === id) setSelected(null);
+      return;
+    }
+    if (id === "uplight") {
+      setLayout((prev) => ({ ...prev, uplight: darkestCorner(items, prev) }));
+    } else if (id === "areaRug") {
+      const rug = ADDITIONS.find((a) => a.id === "areaRug");
+      if (rug) {
+        const spot = bestRugPlacement([...items, rug], layout, opts);
+        if (spot) setLayout((prev) => ({ ...prev, areaRug: spot }));
+      }
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -293,7 +419,7 @@ export function RoomEditor() {
     return () => window.removeEventListener("keydown", onKey);
   }, [rotateSelected]);
 
-  const selectedItem = FURNITURE.find((f) => f.id === selected);
+  const selectedItem = items.find((f) => f.id === selected);
 
   return (
     <div className="fixed inset-0 select-none overflow-hidden bg-[#111214] text-white">
@@ -326,18 +452,22 @@ export function RoomEditor() {
         <pointLight position={[-0.05, 1.6, -1.55]} intensity={1.4} distance={5} decay={2} color="#fff0d2" />
         <pointLight position={[0.5, ROOM.height - 0.2, 0.3]} intensity={0.9} distance={6} decay={2} color="#ffe9c7" />
 
-        <RoomShell />
+        <RoomShell turf={!added.areaRug} shelf={shelf} />
         {snap && <SnapGrid />}
+        {(showZones || dragging) && <ZonesOverlay reachable={analysis.reachable} />}
 
-        {FURNITURE.map((item) => (
+        {items.map((item) => (
           <DraggableItem
             key={item.id}
             item={item}
             placement={layout[item.id]}
+            report={analysis.reports[item.id]}
             selected={selected === item.id}
             showDims={showDims}
+            accentTextiles={added.accentTextiles}
             onSelect={setSelected}
             onMove={move}
+            onDragChange={setDragging}
           />
         ))}
 
@@ -354,12 +484,35 @@ export function RoomEditor() {
         <CameraRig view={view} />
       </Canvas>
 
-      <div className="pointer-events-none absolute left-4 top-4 sm:left-6 sm:top-6">
+      <div className="pointer-events-none absolute top-4 left-4 sm:top-6 sm:left-6">
         <h1 className="text-sm font-semibold tracking-tight text-white/90">Vince&apos;s Room</h1>
         <p className="mt-0.5 font-mono text-[11px] text-white/45">
           {ROOM.width.toFixed(1)} × {ROOM.depth.toFixed(1)} × {ROOM.height.toFixed(2)} m
         </p>
       </div>
+
+      <DesignPanel
+        open={panelOpen}
+        onOpenChange={setPanelOpen}
+        analysis={analysis}
+        selected={selected ? (analysis.reports[selected] ?? null) : null}
+        suggestions={suggestions}
+        added={added}
+        onToggleAddition={toggleAddition}
+        onOptimize={optimize}
+        optimizing={optimizing}
+        lastMoved={lastMoved}
+        onUndo={
+          undoLayout
+            ? () => {
+                setLayout(undoLayout);
+                manualEdit();
+              }
+            : null
+        }
+        showZones={showZones}
+        onToggleZones={() => setShowZones((s) => !s)}
+      />
 
       <div className="absolute inset-x-0 bottom-4 flex flex-col items-center gap-2 px-3 sm:bottom-6">
         <p className="pointer-events-none text-center text-[11px] text-white/45">
@@ -385,8 +538,9 @@ export function RoomEditor() {
           <ToolButton
             label="Reset"
             onClick={() => {
-              setLayout({ ...INITIAL_LAYOUT });
+              setLayout((prev) => ({ ...prev, ...INITIAL_LAYOUT }));
               setSelected(null);
+              manualEdit();
             }}
           >
             <RotateCcw className="size-4" />
