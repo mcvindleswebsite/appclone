@@ -134,7 +134,7 @@ export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: st
         type="button"
         disabled={busy}
         onClick={() => inputRef.current?.click()}
-        className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 py-2 text-xs font-semibold text-white hover:bg-(--accent-deep) disabled:opacity-50"
+        className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 text-sm sm:min-h-9 sm:text-xs font-semibold text-white hover:bg-(--accent-deep) disabled:opacity-50"
       >
         {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ScanText className="size-3.5" />}
         Browse

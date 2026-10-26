@@ -6,7 +6,7 @@ import { useState } from "react";
 import { RISK_PROFILES } from "@/lib/bet/engine";
 import { buildInsights, historyContext, legTally, slipLabel, sportsOf } from "@/lib/bet/history";
 import { cn } from "@/lib/utils";
-import type { BetRecord, LegResult, Outcome } from "@/types/bet";
+import type { BetLeg, BetRecord, LegResult, Outcome } from "@/types/bet";
 
 import { T } from "./theme";
 
@@ -14,11 +14,14 @@ const FILTERS = ["ALL", "PENDING", "WIN", "LOSS"] as const;
 
 /** Leg results are data, not accents: always green for a hit and red for a miss. */
 const LEG_RESULT_STYLES: Record<LegResult, string> = {
-  WIN: "text-[#00DD94]",
-  LOSS: "text-[#FF3B30]",
+  WIN: "font-kalshi-bold text-[#00DD94]",
+  LOSS: "font-kalshi-bold text-[#FF3B30]",
   PENDING: "text-[#F5F7F4]/60",
   VOID: "text-[#F5F7F4]/35 line-through",
 };
+
+/** Only open legs show a price; a settled contract's 99¢/1¢ is noise (older saves still carry it). */
+const openPrice = (leg: BetLeg) => (leg.price && (!leg.result || leg.result === "PENDING") ? leg.price : null);
 
 const LEG_RESULT_MARK: Record<LegResult, string> = { WIN: "✓", LOSS: "✕", PENDING: "•", VOID: "–" };
 
@@ -65,7 +68,7 @@ function QuickAdd({ onQuickAdd }: { onQuickAdd: (links: string, paidCents: numbe
         className="flex flex-col gap-2 sm:flex-row"
       >
         <div className="relative min-w-0 flex-1">
-          <Link2 className="pointer-events-none absolute top-2.5 left-3 size-4 text-[#F5F7F4]/35" />
+          <Link2 className="pointer-events-none absolute top-3.5 left-3 size-4 text-[#F5F7F4]/35 sm:top-2.5" />
           <textarea
             rows={links.includes("\n") ? 3 : 1}
             value={links}
@@ -76,7 +79,7 @@ function QuickAdd({ onQuickAdd }: { onQuickAdd: (links: string, paidCents: numbe
                 void submit();
               }
             }}
-            placeholder="Kalshi market or combo link you bet on (one per line for separate legs)"
+            placeholder="Kalshi link you bet on"
             className={cn(T.input, "resize-none pl-9")}
           />
         </div>
@@ -91,7 +94,7 @@ function QuickAdd({ onQuickAdd }: { onQuickAdd: (links: string, paidCents: numbe
         <button
           type="submit"
           disabled={busy || !links.trim()}
-          className="font-kalshi-bold flex items-center justify-center gap-1.5 rounded-lg bg-(--accent) px-4 py-2 text-xs text-[#050D0A] disabled:opacity-40"
+          className="font-kalshi-bold flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-(--accent) px-4 text-sm text-[#050D0A] disabled:opacity-40 sm:min-h-9 sm:text-xs"
         >
           {busy && <Loader2 className="size-3.5 animate-spin" />} Add to Vault
         </button>
@@ -231,7 +234,8 @@ export function BetVault({
                   {!multi ? (
                     <p className={cn("truncate text-xs", r.slip.legs[0].result ? LEG_RESULT_STYLES[r.slip.legs[0].result] : T.muted)}>
                       {r.slip.legs[0].matchup}
-                      {r.slip.legs[0].price ? ` · ${r.slip.legs[0].pick} @ ${r.slip.legs[0].price}¢` : ""}
+                      {r.slip.legs[0].pick && ` · ${r.slip.legs[0].pick}`}
+                        {openPrice(r.slip.legs[0]) && ` @ ${openPrice(r.slip.legs[0])}¢`}
                     </p>
                   ) : (
                     <>
@@ -259,7 +263,7 @@ export function BetVault({
                             <li key={i} className={cn("flex gap-2", leg.result ? LEG_RESULT_STYLES[leg.result] : "text-[#F5F7F4]/70")}>
                               <span className="w-4 shrink-0 text-center">{leg.result ? LEG_RESULT_MARK[leg.result] : `${i + 1}`}</span>
                               <span className="min-w-0 flex-1 truncate">{leg.market || leg.pick}</span>
-                              {leg.price && <span className="shrink-0 tabular-nums opacity-70">{leg.price}¢</span>}
+                              {openPrice(leg) && <span className="shrink-0 tabular-nums opacity-70">{openPrice(leg)}¢</span>}
                             </li>
                           ))}
                         </ol>

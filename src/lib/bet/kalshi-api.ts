@@ -17,8 +17,10 @@ interface ApiMarket {
   result?: string;
   yes_bid_dollars?: string;
   yes_ask_dollars?: string;
+  no_bid_dollars?: string;
   no_ask_dollars?: string;
   last_price_dollars?: string;
+  settlement_value_dollars?: string;
   mve_selected_legs?: { event_ticker: string; market_ticker: string; side: "yes" | "no" }[];
 }
 
@@ -41,10 +43,36 @@ const resultOf = (m: ApiMarket) => (m.result === "yes" || m.result === "no" ? m.
 
 const SETTLED_STATUSES = new Set(["finalized", "settled", "determined"]);
 
-/** How a leg on `side` settled: WIN/LOSS from the result, VOID if settled without one. */
-const legResult = (m: ApiMarket, side: "yes" | "no"): LegResult => {
+const dollars = (value?: string) => {
+  const n = Number(value);
+  return value !== undefined && Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Which way YES went, from the most authoritative signal available: Kalshi's `result`,
+ * then the settlement value, then the price. After a game ends Kalshi stops trading its
+ * contracts (status "closed") with the price pinned at 99¢/100¢ (YES won) or 0–1¢ (YES
+ * lost) before it publishes the result, so a pinned price on a closed market counts as
+ * settled. On a market still trading, 1¢ or 99¢ is just a longshot or a heavy favorite,
+ * so it doesn't. A 0¢ last price usually means "never traded", so a loss needs a real 1¢
+ * trade or a NO bid of 99¢+.
+ */
+const yesOutcome = (m: ApiMarket): "yes" | "no" | null => {
   const result = resultOf(m);
-  if (result) return result === side ? "WIN" : "LOSS";
+  if (result) return result;
+  const settlement = dollars(m.settlement_value_dollars);
+  if (settlement !== null) return settlement >= 0.99 ? "yes" : settlement <= 0.01 ? "no" : null;
+  if (m.status === "active" || m.status === "initialized") return null;
+  const last = dollars(m.last_price_dollars) ?? 0;
+  if (last >= 0.99 || (dollars(m.yes_bid_dollars) ?? 0) >= 0.99) return "yes";
+  if ((last > 0 && last <= 0.01) || (dollars(m.no_bid_dollars) ?? 0) >= 0.99) return "no";
+  return null;
+};
+
+/** How a leg on `side` settled: WIN/LOSS from the outcome, VOID if settled without one. */
+const legResult = (m: ApiMarket, side: "yes" | "no"): LegResult => {
+  const outcome = yesOutcome(m);
+  if (outcome) return outcome === side ? "WIN" : "LOSS";
   return SETTLED_STATUSES.has(m.status) ? "VOID" : "PENDING";
 };
 
@@ -96,16 +124,19 @@ const createClient = () => {
 
 const toLeg = (m: ApiMarket, event: ApiEvent | null, side: "yes" | "no"): BetLeg => {
   const name = m.yes_sub_title || m.title;
+  const result = legResult(m, side);
+  // A settled contract's 99¢/1¢ quote isn't a price anyone bet at; drop it.
+  const live = result === "PENDING";
   return {
     sport: detectSport(`${event?.product_metadata?.competition ?? ""} ${event?.title ?? ""} ${m.event_ticker}`),
     matchup: event?.title ?? "",
     market: side === "yes" ? m.title : `NO — ${m.title}`,
     pick: side === "yes" ? name : `Not ${name}`,
-    price: side === "yes" ? (cents(m.yes_ask_dollars) ?? cents(m.last_price_dollars)) : cents(m.no_ask_dollars),
+    price: !live ? null : side === "yes" ? (cents(m.yes_ask_dollars) ?? cents(m.last_price_dollars)) : cents(m.no_ask_dollars),
     americanOdds: null,
     ticker: m.ticker,
     side,
-    result: legResult(m, side),
+    result,
   };
 };
 
@@ -155,8 +186,8 @@ export const resolveKalshiLinks = async (input: string, maxLegs: number): Promis
     if (!r) continue;
     if (r.combo) {
       out.comboTicker = r.combo.ticker;
-      out.comboPrice = cents(r.combo.yes_ask_dollars) ?? cents(r.combo.last_price_dollars);
-      out.comboResult = resultOf(r.combo);
+      out.comboResult = yesOutcome(r.combo);
+      out.comboPrice = out.comboResult ? null : (cents(r.combo.yes_ask_dollars) ?? cents(r.combo.last_price_dollars));
     }
     out.legs.push(...r.legs);
     if (r.choice) out.choices.push(r.choice);

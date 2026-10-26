@@ -74,7 +74,7 @@ export function ParlayCard({
 
   const { full } = parlay;
   return (
-    <div className={cn(T.card, "flex flex-col gap-5 p-5")}>
+    <div className={cn(T.card, "flex flex-col gap-5 p-4 sm:p-5")}>
       {/* Bum Pick Summary */}
       <div className="flex flex-col gap-2">
         <p className={T.label}>Bum Pick Summary · {slip.legs.length} legs</p>

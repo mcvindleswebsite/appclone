@@ -365,28 +365,30 @@ export function BetApp() {
   return (
     <div
       data-key-broken={keyBroken || undefined}
-      className={cn("bet-accent bet-app fixed inset-0 overflow-y-auto text-white antialiased", T.bg)}
+      className={cn("bet-accent bet-app fixed inset-0 overflow-x-hidden overflow-y-auto text-white antialiased", T.bg)}
     >
       <header className="bet-safe-top sticky top-0 z-10 border-b border-[#1E2638] bg-[#050D0A]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-          <BrandLogo className="text-lg" />
-          <nav className="flex gap-1 rounded-full bg-[#121824] p-1">
+        {/* One slim line (44px) on every screen: logo, tabs, and the key button until it's synced. */}
+        <div className="mx-auto flex h-11 max-w-6xl items-center gap-2 px-3 sm:gap-4 sm:px-4">
+          <BrandLogo className="shrink-0 text-[15px] sm:text-base" />
+          <nav className="flex shrink-0 gap-0.5 rounded-full bg-[#121824] p-0.5">
             {(
               [
-                ["evaluate", "Evaluate"],
-                ["vault", `Bet Vault${records.length ? ` · ${records.length}` : ""}`],
+                ["evaluate", "Evaluate", null],
+                ["vault", "Bet Vault", records.length || null],
               ] as const
-            ).map(([id, label]) => (
+            ).map(([id, label, count]) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => setTab(id)}
                 className={cn(
-                  "rounded-full px-4 py-1.5 text-sm font-semibold transition-colors",
+                  "rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors sm:px-4",
                   tab === id ? "bg-white text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
                 )}
               >
                 {label}
+                {count && <span className="hidden sm:inline"> · {count}</span>}
               </button>
             ))}
           </nav>
@@ -398,23 +400,26 @@ export function BetApp() {
                 {sync === "synced" ? "Synced" : "Checking…"}
               </span>
             )}
-            <button
-              type="button"
-              aria-label={keyBroken ? "Access key not working — tap to enter it" : "Access key"}
-              title={typeof sync === "object" ? sync.error : undefined}
-              onClick={() => setShowKey((s) => !s)}
-              className="rounded-lg p-2 text-(--accent) transition-colors hover:bg-[#121824]"
-            >
-              <KeyRound className="size-4" />
-            </button>
+            {/* Gone once the key works; shown (red) whenever it needs entering or fixing. */}
+            {sync !== "synced" && (
+              <button
+                type="button"
+                aria-label={keyBroken ? "Access key not working — tap to enter it" : "Access key"}
+                title={typeof sync === "object" ? sync.error : undefined}
+                onClick={() => setShowKey((s) => !s)}
+                className="rounded-lg p-1.5 text-(--accent) transition-colors hover:bg-[#121824]"
+              >
+                <KeyRound className="size-4" />
+              </button>
+            )}
           </div>
         </div>
         {showKey && (
-          <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 pb-3">
+          <div className="mx-auto flex max-w-6xl flex-col gap-1.5 px-3 pb-2.5 sm:flex-row sm:items-center sm:gap-3 sm:px-4">
             <input
               type="password"
               defaultValue={accessKey}
-              placeholder="BET_ACCESS_KEY — enables AI research + cloud vault"
+              placeholder="Access key (BET_ACCESS_KEY)"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   saveKey(e.currentTarget.value.trim());
@@ -431,7 +436,7 @@ export function BetApp() {
         )}
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
         {tab === "vault" ? (
           <BetVault
             records={records}
@@ -441,10 +446,10 @@ export function BetApp() {
             onRefresh={refreshOutcomes}
           />
         ) : (
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             {/* Slip input */}
-            <section className="flex flex-col gap-5">
-              <div className={cn(T.card, "flex flex-col gap-4 p-5")}>
+            <section className="flex min-w-0 flex-col gap-4 sm:gap-5">
+              <div className={cn(T.card, "flex flex-col gap-4 p-4 sm:p-5")}>
                 <div className="flex items-baseline justify-between">
                   <h2 className="font-kalshi-bold text-lg">Bet Slip</h2>
                   {multi && <span className={cn("text-xs", T.muted)}>{slip.legs.length}-leg parlay</span>}
@@ -494,8 +499,8 @@ export function BetApp() {
             </section>
 
             {/* Verdict */}
-            <section className="flex flex-col gap-5 lg:sticky lg:top-20 lg:self-start">
-              <div className={cn(T.card, "flex flex-col gap-5 p-5")}>
+            <section className="flex min-w-0 flex-col gap-4 sm:gap-5 lg:sticky lg:top-14 lg:self-start">
+              <div className={cn(T.card, "flex flex-col gap-5 p-4 sm:p-5")}>
                 <RiskSlider value={risk} onChange={changeRisk} />
               </div>
 
@@ -509,7 +514,7 @@ export function BetApp() {
                   hasKey={!!accessKey}
                 />
               ) : (
-                <div className={cn(T.card, "flex flex-col gap-5 p-5")}>
+                <div className={cn(T.card, "flex flex-col gap-5 p-4 sm:p-5")}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className={T.label}>

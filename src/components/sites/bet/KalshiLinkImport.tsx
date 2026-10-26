@@ -179,10 +179,10 @@ export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, labe
             e.preventDefault();
             if (link.trim()) void importLink(link.trim());
           }}
-          className="flex gap-2"
+          className="grid grid-cols-2 gap-2 sm:flex"
         >
-          <div className="relative min-w-0 flex-1">
-            <Link2 className="pointer-events-none absolute top-2.5 left-3 size-4 text-[#F5F7F4]/35" />
+          <div className="relative col-span-2 min-w-0 flex-1">
+            <Link2 className="pointer-events-none absolute top-3.5 left-3 size-4 text-[#F5F7F4]/35 sm:top-2.5" />
             <textarea
               rows={link.includes("\n") ? 3 : 1}
               value={link}
@@ -193,7 +193,7 @@ export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, labe
                   if (link.trim()) void importLink(link.trim());
                 }
               }}
-              placeholder="Paste Kalshi links — a combo, or one leg per line"
+              placeholder="Kalshi link(s), one per line"
               className={cn(T.input, "resize-none pl-9")}
             />
           </div>
@@ -201,15 +201,15 @@ export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, labe
             type="button"
             aria-label="Paste from clipboard"
             onClick={() => void checkClipboard(true)}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 text-xs font-semibold text-white hover:bg-(--accent-deep)"
+            className="flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[#1E2638] px-3 text-sm font-semibold text-white hover:bg-(--accent-deep) sm:min-h-9 sm:text-xs"
           >
             <ClipboardPaste className="size-3.5" />
-            <span className="hidden sm:inline">Paste</span>
+            Paste
           </button>
           <button
             type="submit"
             disabled={!link.trim() || loading}
-            className="font-kalshi-bold flex shrink-0 items-center rounded-lg bg-(--accent) px-4 text-xs text-[#050D0A] disabled:opacity-40"
+            className="font-kalshi-bold flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-(--accent) px-4 text-sm text-[#050D0A] disabled:opacity-40 sm:min-h-9 sm:text-xs"
           >
             {loading ? <Loader2 className="size-3.5 animate-spin" /> : "Import"}
           </button>

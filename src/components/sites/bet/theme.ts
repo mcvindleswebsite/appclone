@@ -10,7 +10,7 @@ export const T = {
   muted: "text-[#F5F7F4]/60",
   label: "font-kalshi-bold text-[11px] uppercase tracking-[0.08em] text-[#F5F7F4]/60",
   input:
-    "w-full rounded-lg border border-[#1E2638] bg-[#050D0A] px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-[#F5F7F4]/35 focus:border-(--accent)/60",
+    "min-h-11 w-full min-w-0 rounded-lg border border-[#1E2638] bg-[#050D0A] px-3 py-2 text-base text-white sm:min-h-9 sm:text-sm outline-none transition-colors placeholder:text-[#F5F7F4]/35 focus:border-(--accent)/60",
   yes: "text-(--accent)",
   no: "text-[#FF3B30]",
   yesBg: "bg-(--accent)",
