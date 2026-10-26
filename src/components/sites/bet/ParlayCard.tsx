@@ -21,7 +21,7 @@ const signedPct = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
 
 const slipText = (slip: BetSlip, line: SlipLine, title: string) =>
   [
-    `MCVINDLE BETS — ${title} (${line.indexes.length} leg${line.indexes.length > 1 ? "s" : ""})`,
+    `VINDLE BETS — ${title} (${line.indexes.length} leg${line.indexes.length > 1 ? "s" : ""})`,
     ...line.indexes.map((i, n) => {
       const leg = slip.legs[i];
       const quote = leg.price ? ` (${leg.price}¢)` : leg.americanOdds ? ` (${formatAmerican(leg.americanOdds)})` : "";

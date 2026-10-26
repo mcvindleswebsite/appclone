@@ -7,7 +7,7 @@ import "./bet.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 
 export const metadata: Metadata = {
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "MCVINDLE BETS" },
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Vindle" },
   // Next only emits mobile-web-app-capable; iOS Safari still reads the apple- prefixed tag.
   other: { "apple-mobile-web-app-capable": "yes" },
 };

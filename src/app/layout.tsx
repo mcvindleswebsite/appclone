@@ -11,15 +11,19 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "mcvindle",
+    title: "Vindle",
   },
   openGraph: { title, description, type: "website" },
   twitter: { card: "summary", title, description },
-  icons: [
-    { rel: "apple-touch-icon", sizes: "180x180", url: "/sites/ipod/apple-touch-icon.png" },
-    { rel: "icon", type: "image/png", sizes: "32x32", url: "/sites/ipod/favicon-32x32.png" },
-    { rel: "icon", type: "image/png", sizes: "16x16", url: "/sites/ipod/favicon-16x16.png" },
-  ],
+  // Vindle tile: SVG for browser tabs (squircle), a full-bleed PNG for the iOS home screen
+  // (iOS rounds the corners itself), and app/favicon.ico for everything else.
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/apple-touch-icon.png", type: "image/png", sizes: "180x180" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 
 export const viewport: Viewport = {
