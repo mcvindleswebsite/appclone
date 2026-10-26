@@ -2,6 +2,8 @@ export type Side = "YES" | "NO";
 export type RiskLevel = 1 | 2 | 3 | 4 | 5;
 export type Outcome = "PENDING" | "WIN" | "LOSS";
 export type LegRating = "STRONG VALUE" | "NEUTRAL" | "BUM PICK";
+/** How a leg settled. VOID legs (cancelled games) drop out of the parlay. */
+export type LegResult = "WIN" | "LOSS" | "PENDING" | "VOID";
 
 export const MAX_LEGS = 12;
 
@@ -21,6 +23,8 @@ export interface BetLeg {
   ticker?: string;
   /** Which side of the Kalshi market the leg takes. */
   side?: "yes" | "no";
+  /** Settlement, once looked up from Kalshi. */
+  result?: LegResult;
 }
 
 export interface BetSlip {
@@ -114,7 +118,14 @@ export interface HistoryContext {
   winRate: number | null;
   /** Units won per unit staked over settled picks. */
   roi: number | null;
-  recent: { date: string; legs: string; verdict: string; outcome: Outcome; odds: number | null }[];
+  recent: { date: string; legs: string; verdict: string; outcome: Outcome; odds: number | null; legsHit: string | null }[];
+  /** Leg-level accuracy over the same recent picks. */
+  legs: {
+    hit: number;
+    settled: number;
+    bySport: { sport: string; hit: number; settled: number }[];
+    byType: { type: string; hit: number; settled: number }[];
+  };
 }
 
 export interface KalshiMarketOption {
@@ -145,9 +156,24 @@ export interface KalshiImport {
 export interface KalshiSlipImport {
   /** Events whose side the user still has to choose (event-only links). */
   choices: KalshiImport[];
-  legs: (BetLeg & { result: "yes" | "no" | null })[];
+  /** Legs carry `result` when Kalshi has settled them. */
+  legs: BetLeg[];
   comboPrice: number | null;
   comboTicker: string | null;
   /** Settled result of the combo market itself, when the link is a combo. */
   comboResult: "yes" | "no" | null;
+}
+
+/** Zero-token settlement of pasted Kalshi links, from /api/vault/parse-link. */
+export interface VaultSettlement {
+  legs: BetLeg[];
+  comboTicker: string | null;
+  comboPrice: number | null;
+  outcome: Outcome;
+  legsHit: number;
+  legsSettled: number;
+  /** Legs that count (VOID legs excluded). */
+  legsTotal: number;
+  /** Game-page links skipped because they don't say which side was bet. */
+  skipped: number;
 }

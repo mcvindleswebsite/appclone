@@ -103,7 +103,7 @@ export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: st
       }}
       className={cn(
         "relative flex items-center gap-4 overflow-hidden rounded-xl border border-dashed p-4 transition-colors",
-        dragging ? "border-[#00DD94] bg-[#014737]/40" : "border-[#1E2638] bg-[#050D0A]"
+        dragging ? "border-(--accent) bg-(--accent-deep)/40" : "border-[#1E2638] bg-[#050D0A]"
       )}
     >
       <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[#121824]">
@@ -126,7 +126,7 @@ export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: st
         {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
         {busy && (
           <div className="mt-2 h-1 overflow-hidden rounded-full bg-[#1E2638]">
-            <div className="h-full bg-[#00DD94] transition-all" style={{ width: `${(progress ?? 0) * 100}%` }} />
+            <div className="h-full bg-(--accent) transition-all" style={{ width: `${(progress ?? 0) * 100}%` }} />
           </div>
         )}
       </div>
@@ -134,7 +134,7 @@ export function SlipReader({ onParsed }: { onParsed: (slip: BetSlip, rawText: st
         type="button"
         disabled={busy}
         onClick={() => inputRef.current?.click()}
-        className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 py-2 text-xs font-semibold text-white hover:bg-[#014737] disabled:opacity-50"
+        className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 py-2 text-xs font-semibold text-white hover:bg-(--accent-deep) disabled:opacity-50"
       >
         {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ScanText className="size-3.5" />}
         Browse

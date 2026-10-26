@@ -70,3 +70,43 @@
 .bet-toast-in {
   animation: bet-toast-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.15);
 }
+
+/*
+ * Accent color. Green while the access key is synced; every accent on the page turns red
+ * when the key is missing, rejected, or the server can't use it.
+ */
+.bet-accent {
+  --accent: #00dd94;
+  --accent-deep: #014737;
+}
+
+.bet-accent[data-key-broken] {
+  --accent: #ff3b30;
+  --accent-deep: #4a1210;
+}
+
+/* iOS home-screen app: no rubber-banding, no accidental text selection, safe areas respected. */
+.bet-app {
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.bet-app input,
+.bet-app textarea,
+.bet-app select,
+.bet-app pre,
+.bet-selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.bet-safe-top {
+  padding-top: env(safe-area-inset-top);
+}

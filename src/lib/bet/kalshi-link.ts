@@ -1,5 +1,5 @@
 import { detectSport } from "@/lib/bet/parse-slip";
-import type { BetLeg, KalshiImport, KalshiMarketOption, KalshiSlipImport, Outcome } from "@/types/bet";
+import type { BetLeg, KalshiImport, KalshiMarketOption, KalshiSlipImport, Outcome, VaultSettlement } from "@/types/bet";
 
 const LINK = /(?:(?:https?:\/\/)?(?:[\w-]+\.)*kalshi\.com\/|kalshi:\/\/)\S+/gi;
 
@@ -45,13 +45,31 @@ export const legFromOption = (event: KalshiImport, market: KalshiMarketOption): 
 });
 
 /**
- * Settlement of an imported slip: a combo uses its own result; separate legs win only if
- * every leg won, and lose as soon as one lost.
+ * Settles a slip from its legs' results: a lost leg loses the parlay straight away, every
+ * counted leg winning wins it, and VOID legs drop out. A Kalshi combo's own result wins
+ * when it has one.
  */
-export const outcomeOf = (data: KalshiSlipImport): Outcome => {
-  if (data.comboTicker) return data.comboResult === "yes" ? "WIN" : data.comboResult === "no" ? "LOSS" : "PENDING";
-  if (data.legs.some((l) => l.result === "no")) return "LOSS";
-  return data.legs.length > 0 && data.legs.every((l) => l.result === "yes") ? "WIN" : "PENDING";
+export const settleLegs = (legs: BetLeg[], comboResult: "yes" | "no" | null = null) => {
+  const counted = legs.filter((l) => l.result !== "VOID");
+  const hit = counted.filter((l) => l.result === "WIN").length;
+  const settled = counted.filter((l) => l.result === "WIN" || l.result === "LOSS").length;
+  let outcome: Outcome = "PENDING";
+  if (comboResult) outcome = comboResult === "yes" ? "WIN" : "LOSS";
+  else if (counted.some((l) => l.result === "LOSS")) outcome = "LOSS";
+  else if (counted.length > 0 && hit === counted.length) outcome = "WIN";
+  return { outcome, legsHit: hit, legsSettled: settled, legsTotal: counted.length };
+};
+
+/** Zero-token settlement lookup through /api/vault/parse-link; throws a readable Error. */
+export const settleKalshi = async (links: string): Promise<VaultSettlement> => {
+  const response = await fetch("/api/vault/parse-link", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ links }),
+  });
+  const data = (await response.json().catch(() => ({ error: "Bad response" }))) as VaultSettlement | { error: string };
+  if ("error" in data) throw new Error(data.error);
+  return data;
 };
 
 /** A link Kalshi's API resolves for a bare ticker, used to re-check settlement. */

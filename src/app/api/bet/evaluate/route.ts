@@ -22,8 +22,9 @@ export const maxDuration = 120;
 
 /**
  * Locked to Haiku, with no fallback to Sonnet or Opus. Claude Haiku 3.5
- * (claude-3-5-haiku-20241022) was retired on Feb 19, 2026, so this is its current
- * successor. Haiku has no server-side refusal fallback, so a decline is just an error.
+ * (claude-3-5-haiku-20241022, alias claude-3-5-haiku-latest) was retired on Feb 19, 2026
+ * and now returns an error, so this is its current successor. Haiku has no server-side
+ * refusal fallback, so a decline is just an error.
  */
 const MODEL = "claude-haiku-5-5";
 const MAX_TURNS = 3;
@@ -109,7 +110,7 @@ const SLIP_SYSTEM = `You are a sharp, calibrated sports analyst reviewing a whol
 - If a leg should be downgraded because it conflicts with stronger legs, add it to legAdjustments with its new rating and a one-sentence reason. Leave legAdjustments empty otherwise.
 - For a single-leg slip, pathsToVictory lists concrete ways it hits and risks lists concrete ways it misses.
 
-The user's own betting record is included below. Use it as context — note when this slip repeats a pattern that has been losing them money, or plays to what has worked — but never shift a probability because of their preferences.
+The user's own betting record is included below, with how each past leg settled and their leg hit rates by sport and market type. Use it as context: when a leg on this slip is the kind that has kept missing for them (a market type or sport with a poor leg hit rate), say so, and you may downgrade it through legAdjustments if the research also supports that. Note when the slip repeats a pattern that has been losing them money, or plays to what has worked. Never shift a probability just because of their preferences.
 
 When done, call submit_slip exactly once.`;
 
@@ -188,10 +189,22 @@ const describeLeg = (leg: BetLeg, n?: number) =>
 const describeHistory = (h: HistoryContext | null) => {
   if (!h || h.recent.length === 0) return "No betting history yet.";
   const pct = (n: number | null) => (n === null ? "n/a" : `${(n * 100).toFixed(1)}%`);
+  const rate = (r: { hit: number; settled: number }) => `${r.hit}/${r.settled} (${pct(r.settled ? r.hit / r.settled : null)})`;
+  const legs = h.legs ?? { hit: 0, settled: 0, bySport: [], byType: [] };
   return [
     `Settled picks: ${h.settled} · win rate ${pct(h.winRate)} · ROI ${pct(h.roi)} per unit staked`,
+    legs.settled
+      ? [
+          `Leg hit rate over these picks: ${rate(legs)}`,
+          `By sport: ${legs.bySport.map((s) => `${s.sport} ${rate(s)}`).join("; ")}`,
+          `By market type: ${legs.byType.map((t) => `${t.type} ${rate(t)}`).join("; ")}`,
+        ].join("\n")
+      : "No settled legs yet.",
     "Last 20 picks (newest first):",
-    ...h.recent.map((r) => `- ${r.date} [${r.outcome}] ${r.verdict}${r.odds ? ` @ ${r.odds}x` : ""}: ${r.legs}`),
+    ...h.recent.map(
+      (r) =>
+        `- ${r.date} [${r.outcome}${r.legsHit ? ` · ${r.legsHit}` : ""}] ${r.verdict}${r.odds ? ` @ ${r.odds}x` : ""}: ${r.legs}`
+    ),
   ].join("\n");
 };
 

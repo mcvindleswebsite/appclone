@@ -26,7 +26,7 @@ import {
   syncErrorMessage,
   type SyncStatus,
 } from "@/lib/bet/history";
-import { importKalshi, outcomeOf, tickerLink } from "@/lib/bet/kalshi-link";
+import { settleKalshi, settleLegs, tickerLink } from "@/lib/bet/kalshi-link";
 import { emptyLeg } from "@/lib/bet/parse-slip";
 import { cn } from "@/lib/utils";
 import type { BetRecord, BetSlip, Outcome, RiskLevel, SlipAnalysis } from "@/types/bet";
@@ -117,6 +117,8 @@ export function BetApp() {
   const [records, setRecords] = useState<BetRecord[]>([]);
   const [accessKey, setAccessKey] = useState("");
   const [showKey, setShowKey] = useState(false);
+  /** False until localStorage has been read, so the page doesn't flash the broken-key state. */
+  const [booted, setBooted] = useState(false);
   const [sync, setSync] = useState<SyncStatus>("local");
   const [ocrText, setOcrText] = useState<string | null>(null);
   const recordsRef = useRef<BetRecord[]>([]);
@@ -154,6 +156,7 @@ export function BetApp() {
       const missing = merged.filter((r) => (remoteIds.get(r.id) ?? -1) < r.updatedAt);
       if (missing.length) await pushRemote(key, missing);
       setSync("synced");
+      setShowKey(false);
     } catch (error) {
       setSync({ error: syncErrorMessage(error) });
     }
@@ -167,7 +170,11 @@ export function BetApp() {
       setRecords(local);
       const key = localStorage.getItem(ACCESS_KEY_STORAGE) ?? "";
       setAccessKey(key);
-      if (key) void syncRemote(key);
+      setBooted(true);
+      if (key) {
+        setSync("checking");
+        void syncRemote(key);
+      }
     }, 0);
     return () => clearTimeout(boot);
   }, [syncRemote]);
@@ -211,6 +218,8 @@ export function BetApp() {
         body: JSON.stringify({ slip: target, history: historyContext(recordsRef.current) }),
       });
       const data = (await response.json()) as SlipAnalysis | { error: string };
+      if (response.status === 401 || response.status === 403) setSync({ error: "Wrong passphrase" });
+      else if ("error" in data && data.error === "Not configured") setSync({ error: "BET_ACCESS_KEY not set on the server" });
       if ("error" in data) problem = data.error;
       else result = data;
     } catch {
@@ -284,59 +293,62 @@ export function BetApp() {
     if (id === activeId) setActiveId(null);
   };
 
+  /** Logs a bet placed on Kalshi, settled leg by leg from Kalshi's results (no AI). */
   const quickAdd = async (links: string, paidCents: number | null) => {
-    const data = await importKalshi(links);
-    if (data.legs.length === 0) {
-      throw new Error("That's a game page, not a bet — open the specific market or combo you bet and copy its link.");
-    }
+    const data = await settleKalshi(links);
     const slipFromLink: BetSlip = {
-      legs: data.legs.map((l) => ({
-        sport: l.sport,
-        matchup: l.matchup,
-        market: l.market,
-        pick: l.pick,
-        price: l.price,
-        americanOdds: l.americanOdds,
-        ticker: l.ticker,
-        side: l.side,
-      })),
+      legs: data.legs,
       comboPrice: data.comboPrice,
       comboOdds: null,
       comboTicker: data.comboTicker ?? undefined,
     };
-    const outcome = outcomeOf(data);
-    const record = importedRecord(slipFromLink, outcome, paidCents);
+    const record = importedRecord(slipFromLink, data.outcome, paidCents);
     commit([record, ...recordsRef.current], [record]);
-    const skipped = data.choices.length ? ` (${data.choices.length} game link${data.choices.length > 1 ? "s" : ""} skipped — link the market itself)` : "";
-    return `Added ${slipFromLink.legs.length > 1 ? `${slipFromLink.legs.length}-leg slip` : slipFromLink.legs[0].pick} as ${outcome}${skipped}.`;
+    const legs = data.legsTotal > 1 ? ` · ${data.legsHit}/${data.legsTotal} legs hit` : "";
+    const skipped = data.skipped ? ` (${data.skipped} game link${data.skipped > 1 ? "s" : ""} skipped — link the market itself)` : "";
+    return `Added ${data.legsTotal > 1 ? `${data.legsTotal}-leg slip` : data.legs[0].pick} as ${data.outcome}${legs}${skipped}.`;
   };
 
-  /** Re-checks every pending pick that has Kalshi tickers and settles the finished ones. */
+  /**
+   * Re-checks pending picks that have Kalshi tickers: fills in each leg's result as games
+   * finish, and settles the pick once the outcome is known.
+   */
   const refreshOutcomes = async () => {
     const pending = recordsRef.current
       .filter((r) => r.outcome === "PENDING" && (r.slip.comboTicker || r.slip.legs.some((l) => l.ticker)))
       .slice(0, 20);
-    const settled: BetRecord[] = [];
-    for (const r of pending) {
-      const tickers = r.slip.comboTicker ? [r.slip.comboTicker] : r.slip.legs.flatMap((l) => (l.ticker ? [l.ticker] : []));
-      try {
-        const outcome = outcomeOf(await importKalshi(tickers.map(tickerLink).join("\n")));
-        if (outcome !== "PENDING") settled.push(stampOutcome(r, outcome));
-      } catch {
-        // Leave it pending; Kalshi may be briefly unavailable.
-      }
+    const updated: BetRecord[] = [];
+    let newlySettled = 0;
+    await Promise.all(
+      pending.map(async (r) => {
+        const tickers = r.slip.comboTicker ? [r.slip.comboTicker] : r.slip.legs.flatMap((l) => (l.ticker ? [l.ticker] : []));
+        try {
+          const data = await settleKalshi(tickers.map(tickerLink).join("\n"));
+          const results = new Map(data.legs.map((l) => [l.ticker, l.result]));
+          const legs = r.slip.legs.map((l) => (l.ticker && results.has(l.ticker) ? { ...l, result: results.get(l.ticker) } : l));
+          const outcome = r.slip.comboTicker ? data.outcome : settleLegs(legs).outcome;
+          const changed = outcome !== "PENDING" || legs.some((l, i) => l.result !== r.slip.legs[i].result);
+          if (!changed) return;
+          if (outcome !== "PENDING") newlySettled++;
+          updated.push({ ...stampOutcome(r, outcome), slip: { ...r.slip, legs } });
+        } catch {
+          // Leave it as is; Kalshi may be briefly unavailable.
+        }
+      })
+    );
+    if (updated.length) {
+      const byId = new Map(updated.map((r) => [r.id, r]));
+      commit(recordsRef.current.map((r) => byId.get(r.id) ?? r), updated);
     }
-    if (settled.length) {
-      const byId = new Map(settled.map((r) => [r.id, r]));
-      commit(recordsRef.current.map((r) => byId.get(r.id) ?? r), settled);
-    }
-    return settled.length ? `Settled ${settled.length} pick${settled.length > 1 ? "s" : ""}.` : "Nothing new has settled yet.";
+    if (newlySettled) return `Settled ${newlySettled} pick${newlySettled > 1 ? "s" : ""}.`;
+    return updated.length ? "Updated leg results — nothing fully settled yet." : "Nothing new has settled yet.";
   };
 
   const saveKey = (key: string) => {
     setAccessKey(key);
     if (key) {
       localStorage.setItem(ACCESS_KEY_STORAGE, key);
+      setSync("checking");
       void syncRemote(key);
     } else {
       localStorage.removeItem(ACCESS_KEY_STORAGE);
@@ -345,12 +357,17 @@ export function BetApp() {
   };
 
   const leg = slip.legs[0];
+  /** Missing, rejected, or unusable key: every accent on the page turns red. */
+  const keyBroken = booted && (!accessKey || typeof sync === "object");
   const verdictTone = single.verdict === "BUY YES" ? T.yes : single.verdict === "BUY NO" ? T.no : "text-white";
   const marketProb = single.marketProbability;
 
   return (
-    <div className={cn("fixed inset-0 overflow-y-auto text-white antialiased", T.bg)}>
-      <header className="sticky top-0 z-10 border-b border-[#1E2638] bg-[#050D0A]/90 backdrop-blur">
+    <div
+      data-key-broken={keyBroken || undefined}
+      className={cn("bet-accent bet-app fixed inset-0 overflow-y-auto text-white antialiased", T.bg)}
+    >
+      <header className="bet-safe-top sticky top-0 z-10 border-b border-[#1E2638] bg-[#050D0A]/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
           <BrandLogo className="text-lg" />
           <nav className="flex gap-1 rounded-full bg-[#121824] p-1">
@@ -374,21 +391,19 @@ export function BetApp() {
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <span
-              title={typeof sync === "object" ? sync.error : undefined}
-              className={cn("hidden items-center gap-1.5 text-xs sm:flex", typeof sync === "object" ? T.no : T.muted)}
-            >
-              {sync === "synced" ? <Cloud className="size-3.5 text-[#00DD94]" /> : <CloudOff className="size-3.5" />}
-              {sync === "synced" ? "Synced" : typeof sync === "object" ? `Sync error: ${sync.error}` : "Local only"}
-            </span>
+            {/* The status pill disappears entirely while the key is broken; the red accent says it instead. */}
+            {!keyBroken && (
+              <span className={cn("hidden items-center gap-1.5 text-xs sm:flex", T.muted)}>
+                {sync === "synced" ? <Cloud className="size-3.5 text-(--accent)" /> : <CloudOff className="size-3.5" />}
+                {sync === "synced" ? "Synced" : "Checking…"}
+              </span>
+            )}
             <button
               type="button"
-              aria-label="Access key"
+              aria-label={keyBroken ? "Access key not working — tap to enter it" : "Access key"}
+              title={typeof sync === "object" ? sync.error : undefined}
               onClick={() => setShowKey((s) => !s)}
-              className={cn(
-                "rounded-lg p-2 transition-colors hover:bg-[#121824]",
-                accessKey ? "text-[#00DD94]" : "text-[#F5F7F4]/60"
-              )}
+              className="rounded-lg p-2 text-(--accent) transition-colors hover:bg-[#121824]"
             >
               <KeyRound className="size-4" />
             </button>
@@ -409,8 +424,8 @@ export function BetApp() {
               onBlur={(e) => saveKey(e.currentTarget.value.trim())}
               className={cn(T.input, "max-w-md")}
             />
-            <span className={cn("text-xs", typeof sync === "object" ? T.no : T.muted)}>
-              {typeof sync === "object" ? `Sync error: ${sync.error}` : "Stored in this browser only."}
+            <span className={cn("text-xs", keyBroken ? T.no : T.muted)}>
+              {typeof sync === "object" ? sync.error : accessKey ? "Stored in this browser only." : "No key entered."}
             </span>
           </div>
         )}
@@ -463,7 +478,7 @@ export function BetApp() {
                 type="button"
                 disabled={!slipReady(slip) || running}
                 onClick={() => void runEvaluation(slip)}
-                className="font-kalshi-bold flex items-center justify-center gap-2 rounded-xl bg-[#00DD94] py-3.5 text-sm text-[#050D0A] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                className="font-kalshi-bold flex items-center justify-center gap-2 rounded-xl bg-(--accent) py-3.5 text-sm text-[#050D0A] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {running ? (
                   <>
@@ -512,7 +527,7 @@ export function BetApp() {
                     <span
                       className={cn(
                         "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                        ai ? "bg-[#014737] text-[#00DD94]" : "bg-[#1E2638] text-[#F5F7F4]/60"
+                        ai ? "bg-(--accent-deep) text-(--accent)" : "bg-[#1E2638] text-[#F5F7F4]/60"
                       )}
                     >
                       {ai ? <Brain className="size-3" /> : <Calculator className="size-3" />}
@@ -527,7 +542,7 @@ export function BetApp() {
                       <span className="font-semibold">Model {pct(single.probability)}</span>
                     </div>
                     <div className="relative h-2.5 overflow-hidden rounded-full bg-[#FF3B30]/25">
-                      <div className="absolute inset-y-0 left-0 bg-[#00DD94]" style={{ width: pct(single.probability) }} />
+                      <div className="absolute inset-y-0 left-0 bg-(--accent)" style={{ width: pct(single.probability) }} />
                       <div className="absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(marketProb) }} />
                     </div>
                     <div className="flex justify-between text-[11px]">
@@ -546,7 +561,7 @@ export function BetApp() {
                           className={cn(
                             T.inset,
                             "p-3",
-                            single.side === side && (side === "YES" ? "border-[#00DD94]/60" : "border-[#FF3B30]/60")
+                            single.side === side && (side === "YES" ? "border-(--accent)/60" : "border-[#FF3B30]/60")
                           )}
                         >
                           <div className="flex items-baseline justify-between">

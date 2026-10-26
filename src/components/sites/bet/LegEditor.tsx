@@ -103,7 +103,7 @@ export function LegEditor({ slip, onChange }: { slip: BetSlip; onChange: (slip: 
           type="button"
           disabled={slip.legs.length >= MAX_LEGS}
           onClick={addLeg}
-          className="flex items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 py-2 text-xs font-semibold hover:bg-[#014737] disabled:opacity-40"
+          className="flex items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 py-2 text-xs font-semibold hover:bg-(--accent-deep) disabled:opacity-40"
         >
           <Plus className="size-3.5" /> Add leg ({slip.legs.length}/{MAX_LEGS})
         </button>

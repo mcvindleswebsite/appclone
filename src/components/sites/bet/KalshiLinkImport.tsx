@@ -143,8 +143,8 @@ export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, labe
           className="bet-toast-in fixed inset-x-0 top-[max(env(safe-area-inset-top),12px)] z-50 mx-auto w-[min(92vw,420px)] overflow-hidden rounded-[22px] border border-[#1E2638] bg-[#121824]/90 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-xl"
         >
           <div className="flex gap-3 p-4">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#014737]">
-              <Link2 className="size-5 text-[#00DD94]" />
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-(--accent-deep)">
+              <Link2 className="size-5 text-(--accent)" />
             </span>
             <div className="min-w-0">
               <p className="font-kalshi-bold text-[15px] text-white">Kalshi link detected</p>
@@ -165,7 +165,7 @@ export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, labe
                 setToast(null);
                 void importLink(url);
               }}
-              className="font-kalshi-bold border-l border-[#1E2638] py-3 text-[#00DD94] active:bg-[#1E2638]"
+              className="font-kalshi-bold border-l border-[#1E2638] py-3 text-(--accent) active:bg-[#1E2638]"
             >
               Import
             </button>
@@ -201,7 +201,7 @@ export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, labe
             type="button"
             aria-label="Paste from clipboard"
             onClick={() => void checkClipboard(true)}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 text-xs font-semibold text-white hover:bg-[#014737]"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[#1E2638] px-3 text-xs font-semibold text-white hover:bg-(--accent-deep)"
           >
             <ClipboardPaste className="size-3.5" />
             <span className="hidden sm:inline">Paste</span>
@@ -209,7 +209,7 @@ export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, labe
           <button
             type="submit"
             disabled={!link.trim() || loading}
-            className="font-kalshi-bold flex shrink-0 items-center rounded-lg bg-[#00DD94] px-4 text-xs text-[#050D0A] disabled:opacity-40"
+            className="font-kalshi-bold flex shrink-0 items-center rounded-lg bg-(--accent) px-4 text-xs text-[#050D0A] disabled:opacity-40"
           >
             {loading ? <Loader2 className="size-3.5 animate-spin" /> : "Import"}
           </button>
@@ -238,11 +238,11 @@ export function KalshiLinkImport({ onImport }: { onImport: (slip: Imported, labe
                       onClick={() => choose(m)}
                       className={cn(
                         "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                        "border-[#1E2638] bg-[#121824] hover:border-[#00DD94]/50"
+                        "border-[#1E2638] bg-[#121824] hover:border-(--accent)/50"
                       )}
                     >
                       <span className="truncate">{m.pick}</span>
-                      <span className="font-kalshi-bold shrink-0 tabular-nums text-[#00DD94]">{priceOf(m)}¢</span>
+                      <span className="font-kalshi-bold shrink-0 tabular-nums text-(--accent)">{priceOf(m)}¢</span>
                     </button>
                   ))}
                 </div>

@@ -1,16 +1,26 @@
 "use client";
 
-import { Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { RISK_PROFILES } from "@/lib/bet/engine";
-import { buildInsights, historyContext, slipLabel, sportsOf } from "@/lib/bet/history";
+import { buildInsights, historyContext, legTally, slipLabel, sportsOf } from "@/lib/bet/history";
 import { cn } from "@/lib/utils";
-import type { BetRecord, Outcome } from "@/types/bet";
+import type { BetRecord, LegResult, Outcome } from "@/types/bet";
 
 import { T } from "./theme";
 
 const FILTERS = ["ALL", "PENDING", "WIN", "LOSS"] as const;
+
+/** Leg results are data, not accents: always green for a hit and red for a miss. */
+const LEG_RESULT_STYLES: Record<LegResult, string> = {
+  WIN: "text-[#00DD94]",
+  LOSS: "text-[#FF3B30]",
+  PENDING: "text-[#F5F7F4]/60",
+  VOID: "text-[#F5F7F4]/35 line-through",
+};
+
+const LEG_RESULT_MARK: Record<LegResult, string> = { WIN: "✓", LOSS: "✕", PENDING: "•", VOID: "–" };
 
 const OUTCOME_STYLES: Record<Outcome, string> = {
   WIN: "bg-[#00DD94] text-[#050D0A]",
@@ -81,7 +91,7 @@ function QuickAdd({ onQuickAdd }: { onQuickAdd: (links: string, paidCents: numbe
         <button
           type="submit"
           disabled={busy || !links.trim()}
-          className="font-kalshi-bold flex items-center justify-center gap-1.5 rounded-lg bg-[#00DD94] px-4 py-2 text-xs text-[#050D0A] disabled:opacity-40"
+          className="font-kalshi-bold flex items-center justify-center gap-1.5 rounded-lg bg-(--accent) px-4 py-2 text-xs text-[#050D0A] disabled:opacity-40"
         >
           {busy && <Loader2 className="size-3.5 animate-spin" />} Add to Vault
         </button>
@@ -106,6 +116,14 @@ export function BetVault({
 }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
   const [refreshing, setRefreshing] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [refreshNote, setRefreshNote] = useState<string | null>(null);
   const insights = buildInsights(records);
   const { roi } = historyContext(records);
@@ -156,33 +174,33 @@ export function BetVault({
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-      <div className="flex gap-1 rounded-full bg-[#121824] p-1">
-        {FILTERS.map((f) => (
+        <div className="flex gap-1 rounded-full bg-[#121824] p-1">
+          {FILTERS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFilter(f)}
+              className={cn(
+                "rounded-full px-4 py-1.5 text-xs font-semibold transition-colors",
+                filter === f ? "bg-white text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
+              )}
+            >
+              {f === "ALL" ? "All" : f[0] + f.slice(1).toLowerCase()}
+              {f === "PENDING" && insights.record.pending ? ` · ${insights.record.pending}` : ""}
+            </button>
+          ))}
+        </div>
+        {refreshable && (
           <button
-            key={f}
             type="button"
-            onClick={() => setFilter(f)}
-            className={cn(
-              "rounded-full px-4 py-1.5 text-xs font-semibold transition-colors",
-              filter === f ? "bg-white text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
-            )}
+            disabled={refreshing}
+            onClick={() => void refresh()}
+            className="flex items-center gap-1.5 rounded-full bg-[#121824] px-4 py-2 text-xs font-semibold text-[#F5F7F4]/85 hover:text-white disabled:opacity-50"
           >
-            {f === "ALL" ? "All" : f[0] + f.slice(1).toLowerCase()}
-            {f === "PENDING" && insights.record.pending ? ` · ${insights.record.pending}` : ""}
+            <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} /> Check Kalshi results
           </button>
-        ))}
-      </div>
-      {refreshable && (
-        <button
-          type="button"
-          disabled={refreshing}
-          onClick={() => void refresh()}
-          className="flex items-center gap-1.5 rounded-full bg-[#121824] px-4 py-2 text-xs font-semibold text-[#F5F7F4]/85 hover:text-white disabled:opacity-50"
-        >
-          <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} /> Check Kalshi results
-        </button>
-      )}
-      {refreshNote && <span className={cn("text-xs", T.muted)}>{refreshNote}</span>}
+        )}
+        {refreshNote && <span className={cn("text-xs", T.muted)}>{refreshNote}</span>}
       </div>
 
       {shown.length === 0 ? (
@@ -191,75 +209,104 @@ export function BetVault({
         </div>
       ) : (
         <ul className="flex flex-col gap-3">
-          {shown.map((r) => (
-            <li key={r.id} className={cn(T.card, "flex flex-col gap-3 p-4 md:flex-row md:items-start")}>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="rounded bg-[#1E2638] px-2 py-0.5 font-semibold">{sportsOf(r).join(" · ")}</span>
-                  <span className={T.muted}>
-                    {new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                  </span>
-                  <span className={T.muted}>
-                    · Risk {r.risk} {RISK_PROFILES[r.risk].label}
-                  </span>
-                  {r.ai && <span className="rounded bg-[#014737] px-1.5 py-0.5 text-[#00DD94]">AI</span>}
-                  {r.imported && <span className="rounded bg-[#1E2638] px-1.5 py-0.5">Logged from Kalshi</span>}
-                </div>
-                <p className="font-kalshi-bold mt-1.5 truncate">{slipLabel(r.slip)}</p>
-                {r.slip.legs.length === 1 ? (
-                  <p className={cn("truncate text-xs", T.muted)}>
-                    {r.slip.legs[0].matchup}
-                    {r.slip.legs[0].price ? ` · ${r.slip.legs[0].pick} @ ${r.slip.legs[0].price}¢` : ""}
-                  </p>
-                ) : (
-                  <ol className={cn("mt-1 flex flex-col text-xs", T.muted)}>
-                    {r.slip.legs.slice(0, 12).map((leg, i) => (
-                      <li key={i} className="truncate">
-                        {i + 1}. {leg.market || leg.pick}
-                      </li>
-                    ))}
-                  </ol>
-                )}
-                <p className="mt-2 text-xs leading-relaxed text-[#F5F7F4]/85">{r.summary}</p>
-              </div>
-
-              <div className="flex shrink-0 flex-row items-center justify-between gap-3 md:flex-col md:items-end">
-                <div className="text-right">
-                  <p className={cn("font-kalshi-bold text-sm", verdictColor(r.verdict))}>{r.verdict}</p>
-                  {!r.imported && (
-                    <p className={cn("text-[11px] tabular-nums", T.muted)}>
-                      {(r.probability * 100).toFixed(r.probability < 0.1 ? 1 : 0)}% · {r.edge >= 0 ? "+" : ""}
-                      {(r.edge * 100).toFixed(1)}
-                      {r.slip.legs.length > 1 ? "% EV" : " pts"}
+          {shown.map((r) => {
+            const tally = legTally(r.slip);
+            const multi = r.slip.legs.length > 1;
+            const open = expanded.has(r.id);
+            return (
+              <li key={r.id} className={cn(T.card, "flex flex-col gap-3 p-4 md:flex-row md:items-start")}>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="rounded bg-[#1E2638] px-2 py-0.5 font-semibold">{sportsOf(r).join(" · ")}</span>
+                    <span className={T.muted}>
+                      {new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </span>
+                    <span className={T.muted}>
+                      · Risk {r.risk} {RISK_PROFILES[r.risk].label}
+                    </span>
+                    {r.ai && <span className="rounded bg-(--accent-deep) px-1.5 py-0.5 text-(--accent)">AI</span>}
+                    {r.imported && <span className="rounded bg-[#1E2638] px-1.5 py-0.5">Logged from Kalshi</span>}
+                  </div>
+                  <p className="font-kalshi-bold mt-1.5 truncate">{slipLabel(r.slip)}</p>
+                  {!multi ? (
+                    <p className={cn("truncate text-xs", r.slip.legs[0].result ? LEG_RESULT_STYLES[r.slip.legs[0].result] : T.muted)}>
+                      {r.slip.legs[0].matchup}
+                      {r.slip.legs[0].price ? ` · ${r.slip.legs[0].pick} @ ${r.slip.legs[0].price}¢` : ""}
                     </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  {(["WIN", "LOSS", "PENDING"] as Outcome[]).map((o) => (
-                    <button
-                      key={o}
-                      type="button"
-                      onClick={() => onOutcome(r.id, o)}
-                      className={cn(
-                        "rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors",
-                        r.outcome === o ? OUTCOME_STYLES[o] : "bg-[#050D0A] text-[#F5F7F4]/35 hover:text-white"
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => toggle(r.id)}
+                        aria-expanded={open}
+                        className="mt-1 flex items-center gap-2 text-xs"
+                      >
+                        {tally ? (
+                          <span className="font-kalshi-bold">
+                            <span className={tally.hit === tally.total ? "text-[#00DD94]" : tally.hit < tally.settled ? "text-[#FF3B30]" : ""}>
+                              {tally.hit}/{tally.total} Legs Hit
+                            </span>
+                            {tally.settled < tally.total && <span className={T.muted}> · {tally.total - tally.settled} pending</span>}
+                          </span>
+                        ) : (
+                          <span className={T.muted}>{r.slip.legs.length} legs · not settled</span>
+                        )}
+                        <ChevronDown className={cn("size-3.5 text-[#F5F7F4]/60 transition-transform", open && "rotate-180")} />
+                      </button>
+                      {open && (
+                        <ol className="mt-2 flex flex-col gap-1 rounded-lg border border-[#1E2638] bg-[#050D0A] p-2 text-xs">
+                          {r.slip.legs.map((leg, i) => (
+                            <li key={i} className={cn("flex gap-2", leg.result ? LEG_RESULT_STYLES[leg.result] : "text-[#F5F7F4]/70")}>
+                              <span className="w-4 shrink-0 text-center">{leg.result ? LEG_RESULT_MARK[leg.result] : `${i + 1}`}</span>
+                              <span className="min-w-0 flex-1 truncate">{leg.market || leg.pick}</span>
+                              {leg.price && <span className="shrink-0 tabular-nums opacity-70">{leg.price}¢</span>}
+                            </li>
+                          ))}
+                        </ol>
                       )}
-                    >
-                      {o}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    aria-label="Delete pick"
-                    onClick={() => onDelete(r.id)}
-                    className="ml-1 rounded-md p-1.5 text-[#F5F7F4]/35 hover:bg-[#FF3B30]/10 hover:text-[#FF3B30]"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
+                    </>
+                  )}
+                  <p className="mt-2 text-xs leading-relaxed text-[#F5F7F4]/85">{r.summary}</p>
                 </div>
-              </div>
-            </li>
-          ))}
+
+                <div className="flex shrink-0 flex-row items-center justify-between gap-3 md:flex-col md:items-end">
+                  <div className="text-right">
+                    <p className={cn("font-kalshi-bold text-sm", verdictColor(r.verdict))}>{r.verdict}</p>
+                    {!r.imported && (
+                      <p className={cn("text-[11px] tabular-nums", T.muted)}>
+                        {(r.probability * 100).toFixed(r.probability < 0.1 ? 1 : 0)}% · {r.edge >= 0 ? "+" : ""}
+                        {(r.edge * 100).toFixed(1)}
+                        {r.slip.legs.length > 1 ? "% EV" : " pts"}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {(["WIN", "LOSS", "PENDING"] as Outcome[]).map((o) => (
+                      <button
+                        key={o}
+                        type="button"
+                        onClick={() => onOutcome(r.id, o)}
+                        className={cn(
+                          "rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors",
+                          r.outcome === o ? OUTCOME_STYLES[o] : "bg-[#050D0A] text-[#F5F7F4]/35 hover:text-white"
+                        )}
+                      >
+                        {o}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      aria-label="Delete pick"
+                      onClick={() => onDelete(r.id)}
+                      className="ml-1 rounded-md p-1.5 text-[#F5F7F4]/35 hover:bg-[#FF3B30]/10 hover:text-[#FF3B30]"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

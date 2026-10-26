@@ -9,13 +9,13 @@ import type { BetLeg, InjuryFactor, SlipAnalysis } from "@/types/bet";
 import { T } from "./theme";
 
 const RATING_PILL = {
-  "STRONG VALUE": "border-[#00DD94]/50 bg-[#014737] text-[#00DD94]",
+  "STRONG VALUE": "border-(--accent)/50 bg-(--accent-deep) text-(--accent)",
   NEUTRAL: "border-[#F5C542]/40 bg-[#F5C542]/10 text-[#F5C542]",
   "BUM PICK": "border-[#FF3B30]/50 bg-[#FF3B30]/15 text-[#FF3B30]",
 } as const;
 
 const EFFECT_STYLES: Record<InjuryFactor["effect"], string> = {
-  helps: "border-[#00DD94]/40 bg-[#014737] text-[#00DD94]",
+  helps: "border-(--accent)/40 bg-(--accent-deep) text-(--accent)",
   hurts: "border-[#FF3B30]/40 bg-[#FF3B30]/10 text-[#FF3B30]",
   neutral: "border-[#1E2638] bg-[#050D0A] text-[#F5F7F4]/70",
 };
@@ -34,7 +34,7 @@ function HitPips({ hits, games }: { hits: number; games: number }) {
   return (
     <div className="flex gap-1" aria-hidden>
       {Array.from({ length: games }, (_, i) => (
-        <span key={i} className={cn("h-1.5 flex-1 rounded-full", i < hits ? "bg-[#00DD94]" : "bg-[#1E2638]")} />
+        <span key={i} className={cn("h-1.5 flex-1 rounded-full", i < hits ? "bg-(--accent)" : "bg-[#1E2638]")} />
       ))}
     </div>
   );
@@ -78,7 +78,7 @@ export function PickCard({
         {ai && (
           <div className="flex shrink-0 flex-wrap justify-end gap-1.5 text-[11px]">
             <span className={cn("font-kalshi-bold rounded-full border px-2.5 py-1", RATING_PILL[ai.rating])}>{ai.rating}</span>
-            <span className="font-kalshi-bold rounded-full bg-[#014737] px-2.5 py-1 text-[#00DD94]">
+            <span className="font-kalshi-bold rounded-full bg-(--accent-deep) px-2.5 py-1 text-(--accent)">
               Confidence {ai.hitConfidence}/10
             </span>
             <span
@@ -95,7 +95,7 @@ export function PickCard({
 
       {researching ? (
         <div className={cn(T.inset, "flex items-center gap-3 p-4 text-sm")}>
-          <Loader2 className="size-4 shrink-0 animate-spin text-[#00DD94]" />
+          <Loader2 className="size-4 shrink-0 animate-spin text-(--accent)" />
           <span className="text-[#F5F7F4]/85">Researching last 10 games, matchup, and injuries…</span>
         </div>
       ) : !ai ? (

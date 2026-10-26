@@ -10,8 +10,8 @@ const LEVELS: RiskLevel[] = [1, 2, 3, 4, 5];
 
 /** Brand-kit colors only: darkmode green (safety) through light gray to red (variance). */
 const TICK_COLORS: Record<RiskLevel, string> = {
-  1: "#00DD94",
-  2: "#00DD94",
+  1: "var(--accent)",
+  2: "var(--accent)",
   3: "#F5F7F4",
   4: "#FF3B30",
   5: "#FF3B30",
@@ -34,7 +34,7 @@ export function RiskSlider({ value, onChange }: { value: RiskLevel; onChange: (r
         <div className="relative h-1.5 rounded-full bg-[#1E2638]">
           <div
             className="absolute inset-y-0 left-0 rounded-full transition-all"
-            style={{ width: `${pct}%`, background: `linear-gradient(90deg, #00DD94, ${TICK_COLORS[value]})` }}
+            style={{ width: `${pct}%`, background: `linear-gradient(90deg, var(--accent), ${TICK_COLORS[value]})` }}
           />
           {LEVELS.map((level) => {
             const left = ((level - 1) / 4) * 100;

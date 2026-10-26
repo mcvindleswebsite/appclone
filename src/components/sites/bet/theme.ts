@@ -1,6 +1,7 @@
 /**
- * Kalshi brand kit palette, shared across the /bet components. Darkmode green (#00DD94)
- * only ever sits on the dark surfaces below (#050D0A, #121824).
+ * Kalshi brand kit palette, shared across the /bet components. The accent is a CSS variable
+ * (see bet.css): darkmode green #00DD94 while the access key works, red #FF3B30 when it's
+ * missing or broken. It only ever sits on the dark surfaces below (#050D0A, #121824).
  */
 export const T = {
   bg: "bg-[#050D0A]",
@@ -9,9 +10,9 @@ export const T = {
   muted: "text-[#F5F7F4]/60",
   label: "font-kalshi-bold text-[11px] uppercase tracking-[0.08em] text-[#F5F7F4]/60",
   input:
-    "w-full rounded-lg border border-[#1E2638] bg-[#050D0A] px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-[#F5F7F4]/35 focus:border-[#00DD94]/60",
-  yes: "text-[#00DD94]",
+    "w-full rounded-lg border border-[#1E2638] bg-[#050D0A] px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-[#F5F7F4]/35 focus:border-(--accent)/60",
+  yes: "text-(--accent)",
   no: "text-[#FF3B30]",
-  yesBg: "bg-[#00DD94]",
+  yesBg: "bg-(--accent)",
   noBg: "bg-[#FF3B30]",
 } as const;

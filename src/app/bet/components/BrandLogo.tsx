@@ -12,7 +12,7 @@ export function BrandLogo({ className }: { className?: string }) {
       className={cn("inline-flex items-baseline gap-[0.22em] p-[0.24em] leading-none uppercase select-none", className)}
     >
       <span className="font-kalshi-bold tracking-[0.02em] text-[#FFFFFF]">Mcvindle</span>
-      <span className="font-kalshi-light tracking-[0.06em] text-[#00DD94]">Bets</span>
+      <span className="font-kalshi-light tracking-[0.06em] text-(--accent)">Bets</span>
     </span>
   );
 }

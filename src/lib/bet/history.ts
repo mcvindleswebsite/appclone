@@ -54,7 +54,7 @@ export const mergeRecords = (a: BetRecord[], b: BetRecord[]) => {
 const headers = (key: string) => ({ "Content-Type": "application/json", "x-bet-key": key });
 
 /** "local" (no key), "synced", or a human-readable reason the sync failed. */
-export type SyncStatus = "local" | "synced" | { error: string };
+export type SyncStatus = "local" | "checking" | "synced" | { error: string };
 
 /** Turns an API failure into something that says what to fix. */
 const failure = async (response: Response) => {
@@ -132,25 +132,69 @@ const unitsWon = (r: BetRecord) => {
   return r.outcome === "WIN" ? r.decimalOdds - 1 : -1;
 };
 
-/** What the AI sees of the vault: last 20 picks plus win rate and ROI. */
+/** Rough market family for leg-level stats. */
+export const marketType = (leg: BetLeg) => {
+  const m = `${leg.market} ${leg.pick}`;
+  if (/spread|wins? by|[+-]\d+\.5\b/i.test(m)) return "Spread";
+  if (/^(?:no — )?(?:over|under)\b|\btotal\b/i.test(leg.market)) return "Total";
+  if (/\b(points?|pts|rebounds?|reb|assists?|ast|yards?|yds|touchdowns?|td|receptions?|hits?|strikeouts?|threes|goals?|shots?|saves|rbis?)\b|\d+\+/i.test(m)) {
+    return "Player prop";
+  }
+  if (/\bwins?\b|moneyline|\bml\b/i.test(m)) return "Moneyline";
+  return "Other";
+};
+
+/** "8/9" for a slip whose legs have settled results, else null. */
+export const legTally = (slip: BetSlip) => {
+  const counted = slip.legs.filter((l) => l.result && l.result !== "VOID");
+  const settled = counted.filter((l) => l.result === "WIN" || l.result === "LOSS");
+  if (settled.length === 0) return null;
+  return { hit: settled.filter((l) => l.result === "WIN").length, settled: settled.length, total: counted.length };
+};
+
+const legRate = <K extends string>(legs: BetLeg[], keyOf: (leg: BetLeg) => K) => {
+  const map = new Map<K, { hit: number; settled: number }>();
+  for (const leg of legs) {
+    if (leg.result !== "WIN" && leg.result !== "LOSS") continue;
+    const row = map.get(keyOf(leg)) ?? { hit: 0, settled: 0 };
+    row.settled++;
+    if (leg.result === "WIN") row.hit++;
+    map.set(keyOf(leg), row);
+  }
+  return [...map.entries()].sort((a, b) => b[1].settled - a[1].settled);
+};
+
+/** What the AI sees of the vault: last 20 picks with leg results, win rate, ROI, and leg hit rates. */
 export const historyContext = (records: BetRecord[]): HistoryContext => {
   const settled = records.filter((r) => r.outcome !== "PENDING");
   const priced = settled.map(unitsWon).filter((u): u is number => u !== null);
   const wins = settled.filter((r) => r.outcome === "WIN").length;
+  const recent = [...records].sort((a, b) => b.createdAt - a.createdAt).slice(0, 20);
+  const recentLegs = recent.flatMap((r) => r.slip.legs);
   return {
     settled: settled.length,
     winRate: settled.length ? wins / settled.length : null,
     roi: priced.length ? priced.reduce((a, b) => a + b, 0) / priced.length : null,
-    recent: [...records]
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 20)
-      .map((r) => ({
+    recent: recent.map((r) => ({
         date: new Date(r.createdAt).toISOString().slice(0, 10),
-        legs: r.slip.legs.map((l) => `${l.sport}: ${l.market || l.pick}`).join(" | ").slice(0, 400),
+        legs: r.slip.legs
+          .map((l) => `${l.sport}: ${l.market || l.pick}${l.result && l.result !== "PENDING" ? ` [${l.result}]` : ""}`)
+          .join(" | ")
+          .slice(0, 600),
         verdict: r.verdict,
         outcome: r.outcome,
         odds: r.decimalOdds ? Math.round(r.decimalOdds * 100) / 100 : null,
+        legsHit: (() => {
+          const t = legTally(r.slip);
+          return t ? `${t.hit}/${t.total} legs hit${t.settled < t.total ? ` (${t.total - t.settled} pending)` : ""}` : null;
+        })(),
       })),
+    legs: {
+      hit: recentLegs.filter((l) => l.result === "WIN").length,
+      settled: recentLegs.filter((l) => l.result === "WIN" || l.result === "LOSS").length,
+      bySport: legRate(recentLegs, (l) => l.sport).map(([sport, row]) => ({ sport, ...row })),
+      byType: legRate(recentLegs, marketType).map(([type, row]) => ({ type, ...row })),
+    },
   };
 };
 

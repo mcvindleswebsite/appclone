@@ -11,7 +11,7 @@ import { T } from "./theme";
 
 /** NEUTRAL is yellow by request; it's the one color outside the brand kit. */
 const PILL: Record<LegRating, string> = {
-  "STRONG VALUE": "border-[#00DD94]/50 bg-[#014737] text-[#00DD94]",
+  "STRONG VALUE": "border-(--accent)/50 bg-(--accent-deep) text-(--accent)",
   NEUTRAL: "border-[#F5C542]/40 bg-[#F5C542]/10 text-[#F5C542]",
   "BUM PICK": "border-[#FF3B30]/50 bg-[#FF3B30]/15 text-[#FF3B30]",
 };
@@ -80,7 +80,7 @@ export function ParlayCard({
         <p className={T.label}>Bum Pick Summary · {slip.legs.length} legs</p>
         {researching ? (
           <p className="flex items-center gap-2 text-sm text-[#F5F7F4]/85">
-            <Loader2 className="size-4 animate-spin text-[#00DD94]" /> Researching all {slip.legs.length} legs in parallel…
+            <Loader2 className="size-4 animate-spin text-(--accent)" /> Researching all {slip.legs.length} legs in parallel…
           </p>
         ) : !analysis ? (
           <p className={cn("text-sm", T.muted)}>
@@ -135,7 +135,7 @@ export function ParlayCard({
               {c.type === "negative" ? (
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[#FF3B30]" />
               ) : (
-                <Link2 className="mt-0.5 size-3.5 shrink-0 text-[#00DD94]" />
+                <Link2 className="mt-0.5 size-3.5 shrink-0 text-(--accent)" />
               )}
               <span className="text-[#F5F7F4]/85">
                 <span className="font-kalshi-bold">
@@ -154,7 +154,7 @@ export function ParlayCard({
           const a = l.analysis;
           const kept = recommended?.indexes.includes(l.index);
           return (
-            <li key={l.index} className={cn("flex flex-col gap-1 p-3", kept ? "bg-[#014737]/30" : "bg-[#050D0A]")}>
+            <li key={l.index} className={cn("flex flex-col gap-1 p-3", kept ? "bg-(--accent-deep)/30" : "bg-[#050D0A]")}>
               <div className="flex items-center gap-2">
                 <span className="font-kalshi-bold w-5 shrink-0 text-xs text-[#F5F7F4]/50">{l.index + 1}</span>
                 <p className="min-w-0 flex-1 truncate text-sm">{l.leg.market || l.leg.pick || "Untitled leg"}</p>
@@ -206,7 +206,7 @@ export function ParlayCard({
               <button
                 type="button"
                 onClick={() => void copy()}
-                className="font-kalshi-bold flex shrink-0 items-center gap-1.5 rounded-lg bg-[#00DD94] px-3 py-2 text-xs text-[#050D0A] hover:brightness-110"
+                className="font-kalshi-bold flex shrink-0 items-center gap-1.5 rounded-lg bg-(--accent) px-3 py-2 text-xs text-[#050D0A] hover:brightness-110"
               >
                 {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
                 {copied ? "Copied" : "Copy Optimized Slip"}
