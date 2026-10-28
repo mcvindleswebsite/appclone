@@ -4,6 +4,36 @@
  * glossy blue progress bar. Dark mode follows the OS (the iPod's Black finish) unless the
  * page's toggle sets data-theme.
  */
+/*
+ * globals.css locks html/body to the viewport with overflow: hidden for the iPod home page.
+ * Undo that here so the page grows with its content and scrolls. Only the root scrolls, so
+ * the sticky title bar sticks (same approach as /bet). :has() leaves other pages untouched.
+ */
+html:has(.lx),
+html:has(.lx) body {
+  background-color: #d6d6d6 !important;
+  height: auto;
+  min-height: 100%;
+  width: 100%;
+}
+html:has(.lx) {
+  overflow-x: clip;
+  overflow-y: auto;
+}
+html:has(.lx) body {
+  overflow: visible;
+}
+html:has(.lx[data-theme="dark"]),
+html:has(.lx[data-theme="dark"]) body {
+  background-color: #0d0d0e !important;
+}
+@media (prefers-color-scheme: dark) {
+  html:has(.lx:not([data-theme="light"])),
+  html:has(.lx:not([data-theme="light"])) body {
+    background-color: #0d0d0e !important;
+  }
+}
+
 .lx {
   --lx-page: linear-gradient(180deg, #e3e3e3 0%, #d6d6d6 100%);
   --lx-screen: #ffffff;
