@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightLeft, Hourglass, Loader2, Microscope, Radar, RefreshCw, Vault } from "lucide-react";
+import { ArrowRightLeft, Hourglass, Loader2, Microscope, Plus, Radar, RefreshCw, Vault, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { adviseStake, type BankrollSettings } from "@/lib/bet/bankroll";
@@ -104,40 +104,60 @@ function TimeSlider({ value, onChange }: { value: TimeWindow; onChange: (w: Time
   );
 }
 
-/** League chips: tap to toggle, "All" resets. At least one league always stays on. */
+/** Leagues the viewer has X'd out, remembered in this browser. */
+const EXCLUDED_LEAGUES_STORAGE = "mcvindle_bet_excluded_leagues";
+
+/**
+ * League chips: every league starts in; tap one to X it out (struck through), tap again to
+ * bring it back. The last league left can't be removed.
+ */
 function LeaguePicker({ value, onChange }: { value: Set<ScanLeague>; onChange: (next: Set<ScanLeague>) => void }) {
-  const all = value.size === SCAN_LEAGUES.length;
-  const chip = (on: boolean) =>
-    cn(
-      "rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
-      on
-        ? "border-(--accent)/60 bg-(--accent-deep) text-(--accent)"
-        : "border-[#1E2638] bg-[#050D0A] text-[#F5F7F4]/60 hover:text-white"
-    );
+  const excluded = SCAN_LEAGUES.filter((l) => !value.has(l));
   return (
     <div className="flex flex-col gap-2">
-      <p className={T.label}>Leagues</p>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className={T.label}>Leagues</p>
+        {excluded.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange(new Set(SCAN_LEAGUES))}
+            className="text-[11px] text-[#F5F7F4]/60 hover:text-white"
+          >
+            Reset ({excluded.length} out)
+          </button>
+        )}
+      </div>
       <div className="flex flex-wrap gap-1.5">
-        <button type="button" aria-pressed={all} onClick={() => onChange(new Set(SCAN_LEAGUES))} className={chip(all)}>
-          All
-        </button>
         {SCAN_LEAGUES.map((league) => {
-          const on = !all && value.has(league);
+          const on = value.has(league);
+          const last = on && value.size === 1;
           return (
             <button
               key={league}
               type="button"
               aria-pressed={on}
+              aria-label={on ? `Exclude ${league}` : `Include ${league}`}
+              disabled={last}
+              title={last ? "At least one league stays in" : undefined}
               onClick={() => {
-                // From "All", a tap narrows to that one league; otherwise it toggles.
-                const next = all ? new Set<ScanLeague>() : new Set(value);
+                const next = new Set(value);
                 if (on) next.delete(league);
                 else next.add(league);
-                onChange(next.size ? next : new Set(SCAN_LEAGUES));
+                onChange(next);
               }}
-              className={chip(on)}
+              className={cn(
+                "flex items-center gap-1 rounded-full border py-1 pr-2 pl-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed",
+                on
+                  ? "border-(--accent)/60 bg-(--accent-deep) text-(--accent)"
+                  : "border-[#1E2638] bg-[#050D0A] text-[#F5F7F4]/40 line-through decoration-[#FF3B30]/70 hover:text-[#F5F7F4]/70"
+              )}
             >
               {league}
+              {on ? (
+                <X className={cn("size-3.5", last ? "opacity-30" : "opacity-70")} aria-hidden />
+              ) : (
+                <Plus className="size-3.5 opacity-70" aria-hidden />
+              )}
             </button>
           );
         })}
@@ -261,6 +281,20 @@ export function Scanner({
   const [logged, setLogged] = useState<string | null>(null);
   const [frame, setFrame] = useState<TimeWindow>("week");
   const [leagues, setLeagues] = useState<Set<ScanLeague>>(() => new Set(SCAN_LEAGUES));
+  // Restore X'd-out leagues after mount (localStorage isn't readable during the server render).
+  useEffect(() => {
+    const restore = setTimeout(() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem(EXCLUDED_LEAGUES_STORAGE) ?? "[]") as unknown;
+        const out = new Set(Array.isArray(saved) ? saved : []);
+        const kept = SCAN_LEAGUES.filter((l) => !out.has(l));
+        if (kept.length && kept.length < SCAN_LEAGUES.length) setLeagues(new Set(kept));
+      } catch {
+        // Nothing saved, or storage blocked: every league stays in.
+      }
+    }, 0);
+    return () => clearTimeout(restore);
+  }, []);
   /** The clock the timeframe filter reads; refreshed each minute so "Today" rolls over. */
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -388,6 +422,11 @@ export function Scanner({
           onChange={(next) => {
             setLeagues(next);
             setLogged(null);
+            try {
+              localStorage.setItem(EXCLUDED_LEAGUES_STORAGE, JSON.stringify(SCAN_LEAGUES.filter((l) => !next.has(l))));
+            } catch {
+              // Private mode: the choice lasts for this visit.
+            }
           }}
         />
         <button
@@ -413,7 +452,11 @@ export function Scanner({
         {loading && (
           <p className={cn("text-xs", T.muted)}>
             Full-market analysis: every active {frame === "futures" ? "title market" : "fixture"} in{" "}
-            {leagues.size === SCAN_LEAGUES.length ? "all leagues" : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is
+            {leagues.size === SCAN_LEAGUES.length
+              ? "all leagues"
+              : leagues.size >= SCAN_LEAGUES.length - 3
+                ? `all leagues except ${SCAN_LEAGUES.filter((l) => !leagues.has(l)).join(", ")}`
+                : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is
             priced against the sharp books, then the 15 best candidates are researched against your Bet Vault record.
             Usually under a minute.
           </p>
