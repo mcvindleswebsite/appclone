@@ -26,6 +26,9 @@ export const MIN_VOLUME = 1000;
  */
 export const minSharpEdge = (volume: number) => (volume < 5000 ? 0.02 : 0.01);
 
+/** Safest Wins: the favorite must be at least this likely to win, by the market's best price. */
+export const SAFE_MIN_PROBABILITY = 0.6;
+
 export interface PickInput {
   /** Kalshi ask in cents. */
   price: number | null;
@@ -52,5 +55,27 @@ export const failReason = (input: PickInput, a: LegAnalysis): string | null => {
   if (a.hitConfidence < MIN_AI_CONFIDENCE) return `Confidence below ${MIN_AI_CONFIDENCE}/10`;
   if (a.probability < minProbability) return "Below the win-probability floor";
   if (a.probability * kalshiDecimal(input.price) - 1 <= 0) return "Not +EV";
+  return null;
+};
+
+/**
+ * The market's best read on a favorite winning: the sharp books' de-vigged price when they
+ * have one, else Kalshi's own price.
+ */
+export const marketWinProbability = (input: PickInput) => input.sharp?.fair ?? (input.price ?? 0) / 100;
+
+/**
+ * Safest Wins: the most likely winners, not the best value. A favorite qualifies on the
+ * market's win probability; the AI can only knock it out (a bum pick, a trap game, or
+ * grounded research well below the market). Research that comes back thin doesn't block it.
+ */
+export const safeFailReason = (input: PickInput, a: LegAnalysis): string | null => {
+  if (input.price === null) return "No Kalshi price";
+  if (!input.futures && input.volume < MIN_VOLUME) return "Market too thin";
+  const p = marketWinProbability(input);
+  if (p < SAFE_MIN_PROBABILITY) return `Under ${Math.round(SAFE_MIN_PROBABILITY * 100)}% to win`;
+  if (a.researched && a.rating === "BUM PICK") return "Rated a bum pick";
+  if (a.researched && a.opponentTier.trapGame) return "Trap game";
+  if (a.researched && a.dataSufficient && a.probability < p - AI_VETO_GAP) return "Research sees an upset risk the market doesn't";
   return null;
 };

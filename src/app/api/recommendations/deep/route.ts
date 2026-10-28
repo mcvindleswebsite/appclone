@@ -1,7 +1,7 @@
 import { checkAccess } from "@/lib/bet/access";
 import { footballFacts } from "@/lib/bet/football-api";
 import { describeVaultProfile } from "@/lib/bet/history";
-import { failReason } from "@/lib/bet/picks";
+import { failReason, safeFailReason } from "@/lib/bet/picks";
 import { loadProfile } from "@/lib/bet/profile";
 import { researchLeg } from "@/lib/bet/research";
 import { isScanLeague } from "@/lib/bet/scan-scope";
@@ -24,7 +24,7 @@ const mergeStats = (verified: LegAnalysis["reasoningStats"] = [], model: LegAnal
  * fresh research call on the deep model, then the same bar the scan applies. Run from the
  * pick's "Deep check" button only, so the stronger model's cost lands on picks you'd bet.
  *
- * Body: { leg, league, kickoffTime, volume, sharp?, futures?, history? }.
+ * Body: { leg, league, kickoffTime, volume, sharp?, futures?, history?, mode? }.
  */
 export async function POST(request: Request) {
   const denied = checkAccess(request);
@@ -64,8 +64,11 @@ export async function POST(request: Request) {
     return Response.json({
       analysis: merged,
       footballData: !!facts,
-      // Null: the pick still clears the bar after the deep check.
-      failReason: failReason({ price: leg.price, volume: num(body.volume) ?? 0, sharp, futures }, merged),
+      // Null: the pick still clears the bar after the deep check — the same bar its scan mode used.
+      failReason: (body.mode === "safe" ? safeFailReason : failReason)(
+        { price: leg.price, volume: num(body.volume) ?? 0, sharp, futures },
+        merged
+      ),
     });
   } catch {
     return Response.json({ error: "The deep check failed — the AI didn't respond." }, { status: 502 });

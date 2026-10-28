@@ -127,7 +127,7 @@ export interface TrackedPick {
   entry: number;
   /** Probability the pick was recommended at (sharp fair or AI). */
   probability: number;
-  basis: "sharp" | "ai";
+  basis: "sharp" | "ai" | "safe";
   deep: boolean;
   loggedAt: number;
   result?: LegResult;
@@ -318,7 +318,7 @@ export interface RecommendedLeg {
    * What the probability rests on: "sharp" = the sharp books' de-vigged price (the AI only
    * vetoes), "ai" = the AI's own estimate where no book line was found.
    */
-  basis: "sharp" | "ai";
+  basis: "sharp" | "ai" | "safe";
   sharp?: SharpLine;
   /** The AI's own probability, shown alongside a sharp-anchored one. */
   aiProbability: number;
@@ -381,5 +381,5 @@ export interface SoccerRecommendation {
   /** The leagues and time window this scan covered. */
   scope?: ScanScope;
   /** "ai" = the AI's estimate vs the Kalshi price; "sharp" = Kalshi vs the sharp books. */
-  mode?: "ai" | "sharp";
+  mode?: "ai" | "sharp" | "safe";
 }

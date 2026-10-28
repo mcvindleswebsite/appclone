@@ -178,8 +178,11 @@ export function Scanner({
   onLogSingles: (rec: SoccerRecommendation, stakes: number[]) => string;
 }) {
   const [mode, setMode] = useState<"singles" | "parlay">("singles");
-  /** What a pick rests on: the AI's own estimate (default) or a price edge vs the sharp books. */
-  const [pickMode, setPickMode] = useState<"ai" | "sharp">("ai");
+  /**
+   * What a pick rests on: the likeliest winners (default), the AI's own estimate beating the
+   * price, or a price edge vs the sharp books.
+   */
+  const [pickMode, setPickMode] = useState<"safe" | "ai" | "sharp">("safe");
   /** On-demand deep checks in flight or failed, by ticker. */
   const [deepState, setDeepState] = useState<Record<string, { busy: boolean; error?: string }>>({});
 
@@ -197,9 +200,10 @@ export function Scanner({
           league: l.league,
           kickoffTime: l.kickoffTime,
           volume: l.volume ?? 0,
-          // An AI pick is judged on the AI's estimate; the books' price only gates price-edge picks.
-          sharp: l.basis === "sharp" ? l.sharp : undefined,
+          // An AI pick is judged on the AI's estimate; the books' price gates the other two.
+          sharp: l.basis === "ai" ? undefined : l.sharp,
           futures: !!l.futures,
+          mode: l.basis === "safe" ? "safe" : undefined,
           history: profile,
         }),
       });
@@ -303,7 +307,8 @@ export function Scanner({
   const singleStakes = shown.map((l) => {
     // A pick the deep check vetoed gets no stake.
     if (l.vetoed) return { amount: 0, advice: null };
-    const advice = adviseStake(bankroll, l.modelProbability, kalshiDecimal(l.leg.price ?? 50), running);
+    // Kelly stakes nothing without an edge, so Safest Wins picks take the flat stake instead.
+    const advice = l.basis === "safe" ? null : adviseStake(bankroll, l.modelProbability, kalshiDecimal(l.leg.price ?? 50), running);
     const amount = advice ? advice.stake : stake;
     running += amount;
     return { amount, advice };
@@ -331,11 +336,12 @@ export function Scanner({
         </div>
         <div className="flex flex-col gap-2">
           <p className={T.label}>Pick Style</p>
-          <div role="radiogroup" aria-label="Pick style" className="grid grid-cols-2 gap-1 rounded-xl border border-[#1E2638] bg-[#050D0A] p-1">
+          <div role="radiogroup" aria-label="Pick style" className="grid grid-cols-3 gap-1 rounded-xl border border-[#1E2638] bg-[#050D0A] p-1">
             {(
               [
-                ["ai", "AI Picks", "The AI's read beats the Kalshi price"],
-                ["sharp", "Price Edges", "Kalshi cheaper than the sharp books"],
+                ["safe", "Safest Wins", "Likeliest winners, 60%+"],
+                ["ai", "AI Value", "AI's read beats the price"],
+                ["sharp", "Price Edges", "Cheaper than the books"],
               ] as const
             ).map(([id, label, sub]) => (
               <button
@@ -499,7 +505,14 @@ export function Scanner({
                           {l.leg.matchup} · {l.league} · {l.futures ? seasonEnd(l.settlesAt) : kickoff(l.settlesAt)}
                         </p>
                       </div>
-                      <span className="font-kalshi-bold shrink-0 rounded-full border border-(--accent)/50 bg-(--accent-deep) px-2 py-0.5 text-[10px] text-(--accent)">
+                      <span
+                        className={cn(
+                          "font-kalshi-bold shrink-0 rounded-full border px-2 py-0.5 text-[10px]",
+                          l.ev >= 0
+                            ? "border-(--accent)/50 bg-(--accent-deep) text-(--accent)"
+                            : "border-[#FF3B30]/40 bg-[#FF3B30]/10 text-[#FF3B30]"
+                        )}
+                      >
                         {signedPct(l.ev)} EV
                       </span>
                     </div>
@@ -507,18 +520,28 @@ export function Scanner({
                       <span
                         className={cn(
                           "font-kalshi-bold rounded px-1.5 py-0.5 text-[10px]",
-                          l.basis === "sharp" ? "bg-(--accent-deep) text-(--accent)" : "bg-[#1E2638] text-[#F5F7F4]/80"
+                          l.basis === "ai" ? "bg-[#1E2638] text-[#F5F7F4]/80" : "bg-(--accent-deep) text-(--accent)"
                         )}
                       >
                         {l.basis === "sharp" && l.sharp
                           ? `Sharp edge +${(l.sharp.edge * 100).toFixed(1)} pts`
-                          : "AI pick"}
+                          : l.basis === "safe"
+                            ? `${pct(l.modelProbability)} to win`
+                            : "AI pick"}
                       </span>
                       {l.deep && <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px]">Deep-checked</span>}
                       {l.footballData && <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px]">API-Football data</span>}
                     </div>
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] tabular-nums text-[#F5F7F4]/60">
-                      {l.basis === "sharp" && l.sharp ? (
+                      {l.basis === "safe" ? (
+                        <>
+                          <span className="text-white">
+                            Win chance {pct(l.modelProbability)} ({l.sharp ? l.sharp.source : "Kalshi price"})
+                          </span>
+                          <span>AI {pct(l.aiProbability ?? l.modelProbability)}</span>
+                          <span className={l.ev >= 0 ? T.yes : "text-[#FF3B30]/90"}>EV {signedPct(l.ev)}</span>
+                        </>
+                      ) : l.basis === "sharp" && l.sharp ? (
                         <>
                           <span className="text-white">
                             Fair {pct(l.sharp.fair)} ({l.sharp.source})
@@ -616,7 +639,7 @@ export function Scanner({
 
           {shown.length > 0 && (mode === "singles" || shown.length < 2) && (
             <div className={cn(T.card, "flex flex-col gap-3 p-4 sm:p-5")}>
-              {bankroll.bankroll ? (
+              {bankroll.bankroll && rec.mode !== "safe" ? (
                 <p className={cn("text-xs", T.muted)}>
                   Each single is sized by your Kelly setting and caps (Edge tab) ·{" "}
                   <span className="text-white">{formatMoney(singlesTotal)}</span> total
@@ -634,7 +657,9 @@ export function Scanner({
                     />
                   </div>
                   <p className={cn("text-[11px]", T.muted)}>
-                    Flat stake on each single — set a bankroll in the Edge tab for Kelly-sized stakes.
+                    {rec.mode === "safe"
+                      ? "Flat stake on each single — Kelly sizing stakes nothing without an edge, so Safest Wins uses this."
+                      : "Flat stake on each single — set a bankroll in the Edge tab for Kelly-sized stakes."}
                   </p>
                 </div>
               )}

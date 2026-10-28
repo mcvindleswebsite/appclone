@@ -22,6 +22,7 @@ export async function POST(request: Request) {
       summary: trackSummary(picks),
       sharp: by((p) => p.basis === "sharp"),
       ai: by((p) => p.basis === "ai"),
+      safe: by((p) => p.basis === "safe"),
       deep: by((p) => p.deep),
       recent: picks.slice(0, 30),
     });
