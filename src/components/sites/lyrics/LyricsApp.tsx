@@ -4,13 +4,14 @@ import { ChevronLeft, ChevronRight, Eye, EyeOff, Loader2, Lock, Monitor, Moon, M
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { buildChunks, chunkStart, formatTime } from "@/lib/lyrics/chunks";
+import { bandlabEmbedUrl, parseRecording } from "@/lib/lyrics/recording";
 import { parseYouTubeId } from "@/lib/lyrics/youtube-id";
 import { cn } from "@/lib/utils";
 import type { LyricChunk, LyricsSource, Parody, ParodyAssistResponse, SongMeta, VideoCandidate } from "@/types/lyrics";
 
 import { ChunkCard } from "./ChunkCard";
 import { MediaBar } from "./MediaBar";
-import { useTrackPlayer } from "./useTrackPlayer";
+import { useTrackPlayer, type TrackSource } from "./useTrackPlayer";
 
 const KEY_STORAGE = "vindle_lyrics_key";
 const THEME_STORAGE = "vindle_lyrics_theme";
@@ -49,8 +50,23 @@ export function LyricsApp() {
   const [videoInput, setVideoInput] = useState("");
   const [videos, setVideos] = useState<VideoCandidate[]>([]);
   const [findingVideo, setFindingVideo] = useState(false);
+  const [recordingInput, setRecordingInput] = useState("");
+  /** In the studio, sync against the original song or preview the parody recording. */
+  const [listenTo, setListenTo] = useState<"original" | "parody">("original");
 
-  const player = useTrackPlayer(active?.song ?? null);
+  // Visitors hear only the parody recording; the original song is for syncing in the studio.
+  const recording = active?.recording ?? null;
+  const youtubeRecording = recording?.kind === "youtube" ? recording.id : null;
+  const playingParody = !admin || listenTo === "parody";
+  const syncOffset = !active ? 0 : playingParody ? (active.recordingOffset ?? 0) : active.offset;
+  let source: TrackSource | null = null;
+  if (active && playingParody && youtubeRecording) {
+    source = { key: `parody:${active.id}:${youtubeRecording}`, youtubeId: youtubeRecording, previewUrl: null, durationSec: 0 };
+  } else if (active && !playingParody) {
+    const { song } = active;
+    source = { key: `original:${active.id}:${song.youtubeId ?? ""}`, youtubeId: song.youtubeId, previewUrl: song.previewUrl, durationSec: song.durationMs / 1000 };
+  }
+  const player = useTrackPlayer(source);
   const headers = useMemo(() => ({ "Content-Type": "application/json", "x-lyrics-key": adminKey }), [adminKey]);
 
   const load = useCallback(async (key: string) => {
@@ -130,6 +146,8 @@ export function LyricsApp() {
     setStatus(null);
     setVideos([]);
     setVideoInput("");
+    setRecordingInput("");
+    setListenTo("original");
     const url = new URL(window.location.href);
     if (parody) url.searchParams.set("p", parody.id);
     else url.searchParams.delete("p");
@@ -225,6 +243,18 @@ export function LyricsApp() {
     setStatus(null);
   };
 
+  const linkRecording = (event: React.FormEvent) => {
+    event.preventDefault();
+    const parsed = parseRecording(recordingInput);
+    if (!parsed) {
+      setStatus("Paste a YouTube link, a BandLab post link (bandlab.com/post/…), or BandLab’s embed code.");
+      return;
+    }
+    update({ recording: parsed });
+    setRecordingInput("");
+    setStatus(null);
+  };
+
   const save = async () => {
     if (!active) return;
     setSaving(true);
@@ -279,17 +309,17 @@ export function LyricsApp() {
     return `Theme: ${result.analysis.theme} · Rhyme ${result.analysis.rhymeScheme}`;
   };
 
-  // The line playing now; only the full track (not a preview) follows the song's timeline.
+  // The line playing now; only a YouTube video (not a preview) follows the song's timeline.
   const activeLineId = useMemo(() => {
-    if (!active || player.engine !== "youtube" || player.time <= 0) return null;
+    if (!active || !source?.youtubeId || player.time <= 0) return null;
     let current: string | null = null;
     for (const chunk of active.chunks) {
       for (const line of chunk.lines) {
-        if (line.time !== null && line.time + active.offset <= player.time + 0.15) current = line.id;
+        if (line.time !== null && line.time + syncOffset <= player.time + 0.15) current = line.id;
       }
     }
     return current;
-  }, [active, player.engine, player.time]);
+  }, [active, source?.youtubeId, syncOffset, player.time]);
 
   const ThemeIcon = THEME_ICON[theme];
   const trackSeconds = active ? Math.round(active.song.durationMs / 1000) : 0;
@@ -459,13 +489,15 @@ export function LyricsApp() {
                   </button>
                 </div>
               </div>
-              {active.song.youtubeId && <div ref={player.mount} className="aspect-video w-full shrink-0 overflow-hidden rounded-md bg-black sm:w-72" />}
+              {admin && !playingParody && active.song.youtubeId && (
+                <div ref={player.mount} className="aspect-video w-full shrink-0 overflow-hidden rounded-md bg-black sm:w-72" />
+              )}
             </div>
 
             {admin && (
               <div className="lx-screen space-y-2 p-3">
                 <p className="text-xs font-semibold">
-                  YouTube video{" "}
+                  Original song video <span className="lx-sub font-normal">(only you see this)</span>{" "}
                   <span className="lx-sub font-normal">
                     {active.song.youtubeId ? `· ${active.song.youtubeId}` : "· none linked, so only the 30s preview plays"}
                   </span>
@@ -507,20 +539,29 @@ export function LyricsApp() {
 
             {admin && (
               <div className="lx-bar sticky top-[calc(2.25rem+env(safe-area-inset-top))] z-20 -mx-4 flex flex-wrap items-center gap-3 px-4 py-2">
-                <label className="flex items-center gap-2 text-xs">
-                  Offset
+                {youtubeRecording && (
+                  <div className="flex overflow-hidden rounded-full border border-(--lx-border) text-xs font-semibold">
+                    {(["original", "parody"] as const).map((v) => (
+                      <button key={v} type="button" onClick={() => setListenTo(v)} data-active={listenTo === v} className="lx-row px-3 py-1">
+                        {v === "original" ? "Original" : "My recording"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <label className="flex items-center gap-2 text-xs" title={playingParody ? "Lines up the lyrics with your recording" : "Lines up the lyrics with the original video"}>
+                  {playingParody ? "Recording offset" : "Offset"}
                   <input
                     type="range"
-                    min={-30}
-                    max={30}
+                    min={playingParody ? -60 : -30}
+                    max={playingParody ? 60 : 30}
                     step={0.1}
-                    value={active.offset}
-                    onChange={(e) => update({ offset: Number(e.target.value) })}
+                    value={syncOffset}
+                    onChange={(e) => update(playingParody ? { recordingOffset: Number(e.target.value) } : { offset: Number(e.target.value) })}
                     className="w-28 accent-[rgb(52,122,181)]"
                   />
                   <span className="w-12 tabular-nums">
-                    {active.offset > 0 ? "+" : ""}
-                    {active.offset.toFixed(1)}s
+                    {syncOffset > 0 ? "+" : ""}
+                    {syncOffset.toFixed(1)}s
                   </span>
                 </label>
                 <label className="flex items-center gap-2 text-xs">
@@ -552,9 +593,10 @@ export function LyricsApp() {
                     showOriginal={showOriginal}
                     activeLine={activeLine}
                     currentTime={player.time}
+                    seekable={!!source}
                     onSelect={() => {
                       if (admin) setEditingChunk(chunk.id);
-                      void player.playAt(chunkStart(chunk, active.offset) ?? 0);
+                      if (source) void player.playAt(chunkStart(chunk, syncOffset) ?? 0);
                     }}
                     onChange={updateChunk}
                     onAssist={(direction) => assist(chunk, direction)}
@@ -562,6 +604,60 @@ export function LyricsApp() {
                 );
               })}
             </div>
+
+            {(recording || admin) && (
+              <section className="space-y-3 pt-2">
+                <h3 className="lx-accent text-[11px] font-bold uppercase tracking-[0.12em]">Listen to the parody</h3>
+                {recording?.kind === "youtube" &&
+                  (playingParody ? (
+                    <div ref={player.mount} className="aspect-video w-full max-w-2xl overflow-hidden rounded-md bg-black" />
+                  ) : (
+                    <button type="button" onClick={() => setListenTo("parody")} className="lx-chip">
+                      <Play className="size-3 fill-current" /> Play my recording
+                    </button>
+                  ))}
+                {recording?.kind === "bandlab" && (
+                  <iframe
+                    src={bandlabEmbedUrl(recording.id)}
+                    title={`${active.title} on BandLab`}
+                    allow="autoplay; encrypted-media"
+                    allowFullScreen
+                    className="h-[360px] w-full max-w-2xl rounded-md border-0"
+                  />
+                )}
+                {admin && (
+                  <div className="lx-screen space-y-2 p-3">
+                    <p className="text-xs font-semibold">
+                      Your parody recording{" "}
+                      <span className="lx-sub font-normal">
+                        {recording ? `· ${recording.kind === "youtube" ? "YouTube" : "BandLab"}` : "· this is what visitors hear"}
+                      </span>
+                    </p>
+                    <form onSubmit={linkRecording} className="flex flex-wrap gap-2">
+                      <input
+                        value={recordingInput}
+                        onChange={(e) => setRecordingInput(e.target.value)}
+                        placeholder="Paste a YouTube link or a BandLab post link"
+                        className="lx-input min-w-0 flex-1"
+                      />
+                      <button type="submit" className="lx-chip">
+                        Link
+                      </button>
+                      {recording && (
+                        <button type="button" onClick={() => update({ recording: null })} className="lx-chip" aria-label="Unlink recording">
+                          <X className="size-3" />
+                        </button>
+                      )}
+                    </form>
+                    <p className="lx-faint text-[11px]">
+                      {recording?.kind === "bandlab"
+                        ? "BandLab plays in its own player, so visitors can’t tap a verse to jump to it. Use a YouTube upload for that."
+                        : "With a YouTube recording, visitors can tap any verse to jump to it. Switch to My recording above and set the recording offset so the lyrics line up."}
+                    </p>
+                  </div>
+                )}
+              </section>
+            )}
           </article>
         )}
       </main>
@@ -591,7 +687,15 @@ export function LyricsApp() {
         </div>
       )}
 
-      <MediaBar song={active?.song ?? null} player={player} />
+      {active && source && (
+        <MediaBar
+          artwork={active.song.artwork || null}
+          title={playingParody ? active.title : active.song.title}
+          subtitle={playingParody ? `Parody of ${active.song.title} · ${active.song.artist}` : active.song.artist}
+          sourceLabel={playingParody ? "Parody" : active.song.youtubeId ? "Original" : "Preview"}
+          player={player}
+        />
+      )}
     </div>
   );
 }

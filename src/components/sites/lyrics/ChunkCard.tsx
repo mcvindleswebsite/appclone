@@ -18,6 +18,8 @@ interface ChunkCardProps {
   /** Index of the line playing now, or -1. */
   activeLine: number;
   currentTime: number;
+  /** Whether clicking plays from here (false when only a BandLab player or nothing is linked). */
+  seekable: boolean;
   onSelect: () => void;
   onChange: (chunk: LyricChunk) => void;
   onAssist: (direction: string) => Promise<string | null>;
@@ -25,10 +27,10 @@ interface ChunkCardProps {
 
 /**
  * One lyric chunk, styled as an iPod menu row: the chunk playing now gets the blue selection.
- * Clicking it seeks the player there and plays; for the admin it also opens the editor:
+ * Clicking it seeks the player there and plays (when seekable); for the admin it also opens the editor:
  * parody lines, syllable counts, per-line timestamps, and the AI assist.
  */
-export function ChunkCard({ chunk, offset, admin, editing, showOriginal, activeLine, currentTime, onSelect, onChange, onAssist }: ChunkCardProps) {
+export function ChunkCard({ chunk, offset, admin, editing, showOriginal, activeLine, currentTime, seekable, onSelect, onChange, onAssist }: ChunkCardProps) {
   const [direction, setDirection] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -58,7 +60,7 @@ export function ChunkCard({ chunk, offset, admin, editing, showOriginal, activeL
     <section
       onClick={onSelect}
       data-active={playingHere && !editing}
-      className={cn("lx-row cursor-pointer px-4 py-4 sm:px-5", editing && "bg-(--lx-hover)")}
+      className={cn("px-4 py-4 sm:px-5", (seekable || admin) && "lx-row cursor-pointer", editing && "bg-(--lx-hover)")}
     >
       <header className="mb-2 flex items-center gap-3">
         <h3 className="lx-accent text-[11px] font-bold uppercase tracking-[0.12em]">{chunk.label}</h3>

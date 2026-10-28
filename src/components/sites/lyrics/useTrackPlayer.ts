@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { SongMeta } from "@/types/lyrics";
 import type { YTNamespace, YTPlayer } from "@/types/youtube";
 
 /** "youtube" plays the full track in an embedded video; "preview" plays the 30s iTunes clip. */
@@ -33,11 +32,21 @@ const loadYouTube = () => {
 };
 
 /**
- * Plays the active song: its linked YouTube video when there is one (seekable to any lyric),
- * otherwise the iTunes preview. `mount` is a callback ref for the element the video goes in;
+ * What the player plays: a YouTube video (seekable to any lyric) or, without one, a 30s
+ * preview clip. `key` names the source, so switching sources resets the readout.
+ */
+export interface TrackSource {
+  key: string;
+  youtubeId: string | null;
+  previewUrl: string | null;
+  durationSec: number;
+}
+
+/**
+ * Plays one source at a time. `mount` is a callback ref for the element the video goes in;
  * YouTube's terms require the player to stay visible, so it's shown on the page.
  */
-export const useTrackPlayer = (song: SongMeta | null) => {
+export const useTrackPlayer = (source: TrackSource | null) => {
   const audio = useRef<HTMLAudioElement | null>(null);
   const video = useRef<YTPlayer | null>(null);
   const ready = useRef(false);
@@ -51,7 +60,9 @@ export const useTrackPlayer = (song: SongMeta | null) => {
   const [notice, setNotice] = useState<string | null>(null);
   const volumeRef = useRef(0.8);
 
-  const youtubeId = song?.youtubeId ?? null;
+  const youtubeId = source?.youtubeId ?? null;
+  const previewUrl = source?.previewUrl ?? null;
+  const key = source?.key ?? null;
   const engine: Engine = youtubeId ? "youtube" : "preview";
 
   // The preview <audio>, made once on the client.
@@ -72,14 +83,14 @@ export const useTrackPlayer = (song: SongMeta | null) => {
     };
   }, []);
 
-  // Reset the readout when the song changes (during render, so there's no stale frame).
-  const [loaded, setLoaded] = useState(song);
-  if (loaded !== song) {
-    setLoaded(song);
+  // Reset the readout when the source changes (during render, so there's no stale frame).
+  const [loaded, setLoaded] = useState(key);
+  if (loaded !== key) {
+    setLoaded(key);
     setTime(0);
     setPlaying(false);
     setNotice(null);
-    setDuration(song ? song.durationMs / 1000 : 0);
+    setDuration(source?.durationSec ?? 0);
   }
 
   // The preview engine loads its clip here.
@@ -87,10 +98,10 @@ export const useTrackPlayer = (song: SongMeta | null) => {
     const el = audio.current;
     if (el) {
       el.pause();
-      el.src = !youtubeId && song?.previewUrl ? song.previewUrl : "";
+      el.src = !youtubeId && previewUrl ? previewUrl : "";
       el.volume = volumeRef.current;
     }
-  }, [song, youtubeId]);
+  }, [key, youtubeId, previewUrl]);
 
   // The YouTube player, rebuilt when the video changes.
   useEffect(() => {
@@ -145,7 +156,7 @@ export const useTrackPlayer = (song: SongMeta | null) => {
 
   const playAt = useCallback(
     async (seconds: number) => {
-      if (!song) return;
+      if (!key) return;
       setNotice(null);
       if (youtubeId) {
         setTime(seconds);
@@ -156,7 +167,7 @@ export const useTrackPlayer = (song: SongMeta | null) => {
         return;
       }
       const el = audio.current;
-      if (!el || !song.previewUrl) {
+      if (!el || !previewUrl) {
         setNotice("Nothing to play — this song has no video or preview yet.");
         return;
       }
@@ -165,11 +176,11 @@ export const useTrackPlayer = (song: SongMeta | null) => {
       el.currentTime = 0;
       await el.play().catch(() => setNotice("Tap play to start the preview."));
     },
-    [song, youtubeId]
+    [key, youtubeId, previewUrl]
   );
 
   const toggle = useCallback(async () => {
-    if (!song) return;
+    if (!key) return;
     if (youtubeId) {
       if (!video.current || !ready.current) return;
       if (video.current.getPlayerState() === YT_PLAYING) video.current.pauseVideo();
@@ -183,7 +194,7 @@ export const useTrackPlayer = (song: SongMeta | null) => {
     }
     if (el.paused) await el.play().catch(() => undefined);
     else el.pause();
-  }, [song, youtubeId]);
+  }, [key, youtubeId]);
 
   const seek = useCallback(
     (seconds: number) => {

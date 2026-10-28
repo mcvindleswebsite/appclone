@@ -9,7 +9,7 @@ export interface SongMeta {
   durationMs: number;
   /** 30-second iTunes preview, played when no YouTube video is linked. */
   previewUrl: string | null;
-  /** The YouTube video that plays the full track; line times follow this video. */
+  /** The original song's YouTube video, for syncing in the studio only; line times follow it. */
   youtubeId: string | null;
 }
 
@@ -29,13 +29,23 @@ export interface LyricChunk {
   lines: LyricLine[];
 }
 
+/** The parody as performed: what visitors hear. Only YouTube can be seeked to a lyric. */
+export interface Recording {
+  kind: "youtube" | "bandlab";
+  id: string;
+}
+
 export interface Parody {
   id: string;
   title: string;
   song: SongMeta;
   chunks: LyricChunk[];
-  /** Global sync offset in seconds, added to every line time. */
+  /** Global sync offset in seconds, added to every line time against the original video. */
   offset: number;
+  /** The parody recording visitors hear. Optional: parodies saved before it existed lack it. */
+  recording?: Recording | null;
+  /** Sync offset for a YouTube recording, added to every line time instead of `offset`. */
+  recordingOffset?: number;
   published: boolean;
   createdAt: number;
   updatedAt: number;
