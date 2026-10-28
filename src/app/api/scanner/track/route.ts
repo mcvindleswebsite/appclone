@@ -23,6 +23,7 @@ export async function POST(request: Request) {
       sharp: by((p) => p.basis === "sharp"),
       ai: by((p) => p.basis === "ai"),
       safe: by((p) => p.basis === "safe"),
+      mismatch: by((p) => p.basis === "mismatch"),
       deep: by((p) => p.deep),
       recent: picks.slice(0, 30),
     });

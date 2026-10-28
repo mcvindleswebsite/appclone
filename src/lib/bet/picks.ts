@@ -26,6 +26,48 @@ export const MIN_VOLUME = 1000;
  */
 export const minSharpEdge = (volume: number) => (volume < 5000 ? 0.02 : 0.01);
 
+/**
+ * Mismatches: a good-not-elite team against a bottom-of-the-table one. Works off the real
+ * league table, so the obvious title favorites (top 3) are left out on purpose.
+ */
+export const MISMATCH = {
+  /** The favorite still has to be the market's favorite to win. */
+  minProbability: 0.5,
+  /** Leave out the league's top 3: everyone already knows those. */
+  skipTop: 3,
+  /** The opponent sits in the bottom third of the table. */
+  bottomShare: 1 / 3,
+  /** Table places between them, as a share of the league (7 places in a 20-team league). */
+  minGapShare: 0.35,
+  /** Thin leagues (Saudi) are allowed down to this; the pick is flagged as thin. */
+  minVolume: 200,
+} as const;
+
+export interface TableMatchup {
+  pick: { rank: number; form: string };
+  opponent: { rank: number; form: string };
+  of: number;
+}
+
+/** Whether a favorite-vs-opponent table spot is the kind of mismatch the mode looks for. */
+export const isMismatch = (t: TableMatchup) =>
+  t.pick.rank > MISMATCH.skipTop &&
+  t.opponent.rank > t.of - Math.ceil(t.of * MISMATCH.bottomShare) &&
+  t.opponent.rank - t.pick.rank >= Math.round(t.of * MISMATCH.minGapShare);
+
+/** The AI can knock a mismatch out; it can't add one. */
+export const mismatchFailReason = (input: PickInput, a: LegAnalysis): string | null => {
+  if (input.price === null) return "No Kalshi price";
+  if (input.volume < MISMATCH.minVolume) return "Market too thin";
+  if (marketWinProbability(input) < MISMATCH.minProbability) return "Not the favorite";
+  if (a.researched && a.rating === "BUM PICK") return "Rated a bum pick";
+  if (a.researched && a.opponentTier.trapGame) return "Trap game";
+  if (a.researched && a.dataSufficient && a.probability < marketWinProbability(input) - AI_VETO_GAP) {
+    return "Research sees an upset risk the market doesn't";
+  }
+  return null;
+};
+
 /** Safest Wins: the favorite must be at least this likely to win, by the market's best price. */
 export const SAFE_MIN_PROBABILITY = 0.6;
 

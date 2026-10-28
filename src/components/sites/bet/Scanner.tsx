@@ -22,6 +22,7 @@ import { T } from "./theme";
 
 const pct = (n: number, digits = 0) => `${(n * 100).toFixed(digits)}%`;
 const signedPct = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th"}`;
 
 const kickoff = (settlesAt: string) =>
   new Date(kickoffOf(settlesAt)).toLocaleString("en-US", {
@@ -179,10 +180,10 @@ export function Scanner({
 }) {
   const [mode, setMode] = useState<"singles" | "parlay">("singles");
   /**
-   * What a pick rests on: the likeliest winners (default), the AI's own estimate beating the
-   * price, or a price edge vs the sharp books.
+   * What a pick rests on: a good team against a bottom-third one (default), the likeliest
+   * winners, the AI's own estimate beating the price, or a price edge vs the sharp books.
    */
-  const [pickMode, setPickMode] = useState<"safe" | "ai" | "sharp">("safe");
+  const [pickMode, setPickMode] = useState<"mismatch" | "safe" | "ai" | "sharp">("mismatch");
   /** On-demand deep checks in flight or failed, by ticker. */
   const [deepState, setDeepState] = useState<Record<string, { busy: boolean; error?: string }>>({});
 
@@ -203,7 +204,7 @@ export function Scanner({
           // An AI pick is judged on the AI's estimate; the books' price gates the other two.
           sharp: l.basis === "ai" ? undefined : l.sharp,
           futures: !!l.futures,
-          mode: l.basis === "safe" ? "safe" : undefined,
+          mode: l.basis,
           history: profile,
         }),
       });
@@ -308,7 +309,7 @@ export function Scanner({
     // A pick the deep check vetoed gets no stake.
     if (l.vetoed) return { amount: 0, advice: null };
     // Kelly stakes nothing without an edge, so Safest Wins picks take the flat stake instead.
-    const advice = l.basis === "safe" ? null : adviseStake(bankroll, l.modelProbability, kalshiDecimal(l.leg.price ?? 50), running);
+    const advice = l.basis === "safe" || l.basis === "mismatch" ? null : adviseStake(bankroll, l.modelProbability, kalshiDecimal(l.leg.price ?? 50), running);
     const amount = advice ? advice.stake : stake;
     running += amount;
     return { amount, advice };
@@ -336,9 +337,10 @@ export function Scanner({
         </div>
         <div className="flex flex-col gap-2">
           <p className={T.label}>Pick Style</p>
-          <div role="radiogroup" aria-label="Pick style" className="grid grid-cols-3 gap-1 rounded-xl border border-[#1E2638] bg-[#050D0A] p-1">
+          <div role="radiogroup" aria-label="Pick style" className="grid grid-cols-2 gap-1 rounded-xl sm:grid-cols-4 border border-[#1E2638] bg-[#050D0A] p-1">
             {(
               [
+                ["mismatch", "Mismatches", "Good team vs bottom third"],
                 ["safe", "Safest Wins", "Likeliest winners, 60%+"],
                 ["ai", "AI Value", "AI's read beats the price"],
                 ["sharp", "Price Edges", "Cheaper than the books"],
@@ -525,15 +527,27 @@ export function Scanner({
                       >
                         {l.basis === "sharp" && l.sharp
                           ? `Sharp edge +${(l.sharp.edge * 100).toFixed(1)} pts`
-                          : l.basis === "safe"
-                            ? `${pct(l.modelProbability)} to win`
-                            : "AI pick"}
+                          : l.basis === "mismatch" && l.table
+                            ? `${ordinal(l.table.pick.rank)} vs ${ordinal(l.table.opponent.rank)} of ${l.table.of}`
+                            : l.basis === "safe"
+                              ? `${pct(l.modelProbability)} to win`
+                              : "AI pick"}
                       </span>
+                      {l.table && (l.table.pick.form || l.table.opponent.form) && (
+                        <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px] tracking-wide">
+                          Form {l.table.pick.form.slice(-5) || "?"} vs {l.table.opponent.form.slice(-5) || "?"}
+                        </span>
+                      )}
+                      {l.thin && (
+                        <span className="rounded bg-[#FF3B30]/10 px-1.5 py-0.5 text-[10px] text-[#FF3B30]">
+                          Thin market — use a limit order
+                        </span>
+                      )}
                       {l.deep && <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px]">Deep-checked</span>}
                       {l.footballData && <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px]">API-Football data</span>}
                     </div>
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] tabular-nums text-[#F5F7F4]/60">
-                      {l.basis === "safe" ? (
+                      {l.basis === "safe" || l.basis === "mismatch" ? (
                         <>
                           <span className="text-white">
                             Win chance {pct(l.modelProbability)} ({l.sharp ? l.sharp.source : "Kalshi price"})
@@ -639,7 +653,7 @@ export function Scanner({
 
           {shown.length > 0 && (mode === "singles" || shown.length < 2) && (
             <div className={cn(T.card, "flex flex-col gap-3 p-4 sm:p-5")}>
-              {bankroll.bankroll && rec.mode !== "safe" ? (
+              {bankroll.bankroll && rec.mode !== "safe" && rec.mode !== "mismatch" ? (
                 <p className={cn("text-xs", T.muted)}>
                   Each single is sized by your Kelly setting and caps (Edge tab) ·{" "}
                   <span className="text-white">{formatMoney(singlesTotal)}</span> total
@@ -657,7 +671,7 @@ export function Scanner({
                     />
                   </div>
                   <p className={cn("text-[11px]", T.muted)}>
-                    {rec.mode === "safe"
+                    {rec.mode === "safe" || rec.mode === "mismatch"
                       ? "Flat stake on each single — Kelly sizing stakes nothing without an edge, so Safest Wins uses this."
                       : "Flat stake on each single — set a bankroll in the Edge tab for Kelly-sized stakes."}
                   </p>

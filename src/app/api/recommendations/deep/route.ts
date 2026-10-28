@@ -1,7 +1,7 @@
 import { checkAccess } from "@/lib/bet/access";
 import { footballFacts } from "@/lib/bet/football-api";
 import { describeVaultProfile } from "@/lib/bet/history";
-import { failReason, safeFailReason } from "@/lib/bet/picks";
+import { failReason, mismatchFailReason, safeFailReason } from "@/lib/bet/picks";
 import { loadProfile } from "@/lib/bet/profile";
 import { researchLeg } from "@/lib/bet/research";
 import { isScanLeague } from "@/lib/bet/scan-scope";
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
       analysis: merged,
       footballData: !!facts,
       // Null: the pick still clears the bar after the deep check — the same bar its scan mode used.
-      failReason: (body.mode === "safe" ? safeFailReason : failReason)(
+      failReason: (body.mode === "safe" ? safeFailReason : body.mode === "mismatch" ? mismatchFailReason : failReason)(
         { price: leg.price, volume: num(body.volume) ?? 0, sharp, futures },
         merged
       ),

@@ -14,6 +14,7 @@ interface TrackResponse {
   sharp?: TrackSummary;
   ai?: TrackSummary;
   safe?: TrackSummary;
+  mismatch?: TrackSummary;
   deep?: TrackSummary;
   recent?: TrackedPick[];
   error?: string;
@@ -55,6 +56,7 @@ export function TrackRecord({ accessKey }: { accessKey: string }) {
   const rows: [string, TrackSummary | undefined][] = [
     ["Price Edges", data?.sharp],
     ["AI Picks", data?.ai],
+    ["Mismatches", data?.mismatch],
     ["Safest Wins", data?.safe],
     ["Deep-checked", data?.deep],
   ];
@@ -150,7 +152,7 @@ export function TrackRecord({ accessKey }: { accessKey: string }) {
                     <span className="min-w-0 flex-1 truncate">
                       {p.pick} <span className={T.muted}>· {p.matchup}</span>
                     </span>
-                    <span className={cn("shrink-0", T.muted)}>{p.basis === "sharp" ? "Edge" : p.basis === "safe" ? "Safe" : "AI"}</span>
+                    <span className={cn("shrink-0", T.muted)}>{{ sharp: "Edge", safe: "Safe", mismatch: "Mismatch", ai: "AI" }[p.basis]}</span>
                     <span className="shrink-0 tabular-nums">{p.entry}¢</span>
                     {typeof p.close === "number" && (
                       <span className={cn("shrink-0 tabular-nums", tone(p.close / p.entry - 1))}>→ {p.close.toFixed(1)}¢</span>

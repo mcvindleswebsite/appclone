@@ -127,7 +127,7 @@ export interface TrackedPick {
   entry: number;
   /** Probability the pick was recommended at (sharp fair or AI). */
   probability: number;
-  basis: "sharp" | "ai" | "safe";
+  basis: "sharp" | "ai" | "safe" | "mismatch";
   deep: boolean;
   loggedAt: number;
   result?: LegResult;
@@ -318,7 +318,7 @@ export interface RecommendedLeg {
    * What the probability rests on: "sharp" = the sharp books' de-vigged price (the AI only
    * vetoes), "ai" = the AI's own estimate where no book line was found.
    */
-  basis: "sharp" | "ai" | "safe";
+  basis: "sharp" | "ai" | "safe" | "mismatch";
   sharp?: SharpLine;
   /** The AI's own probability, shown alongside a sharp-anchored one. */
   aiProbability: number;
@@ -332,6 +332,10 @@ export interface RecommendedLeg {
   volume?: number;
   /** Set when an on-demand deep check found the pick no longer clears the bar. */
   vetoed?: string;
+  /** League-table spots (API-Football) for a Mismatches pick. */
+  table?: { pick: { rank: number; form: string }; opponent: { rank: number; form: string }; of: number };
+  /** The market trades thin: the listed price may not fill in size. */
+  thin?: boolean;
   /** Model's probability the leg wins. */
   modelProbability: number;
   /** What the Kalshi price implies. */
@@ -381,5 +385,5 @@ export interface SoccerRecommendation {
   /** The leagues and time window this scan covered. */
   scope?: ScanScope;
   /** "ai" = the AI's estimate vs the Kalshi price; "sharp" = Kalshi vs the sharp books. */
-  mode?: "ai" | "sharp" | "safe";
+  mode?: "ai" | "sharp" | "safe" | "mismatch";
 }

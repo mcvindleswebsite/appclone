@@ -130,6 +130,56 @@ const sameTeam = (a: string, b: string) => {
   return x.some((t) => y.some((w) => w.startsWith(t) || t.startsWith(w)));
 };
 
+interface ApiStandingsLeague {
+  league?: { standings?: { rank?: number; team?: { name?: string }; points?: number; form?: string }[][] };
+}
+
+export interface TableSpot {
+  rank: number;
+  /** Teams in the table (or conference/group) this rank is out of. */
+  of: number;
+  points: number;
+  form: string;
+}
+
+const STANDINGS_TTL = 6 * 60 * 60;
+
+/**
+ * A league's table by team name (one request, cached 6 hours). Leagues split into groups or
+ * conferences (MLS) rank each team within its own. Null when unavailable on the plan.
+ */
+export const standings = async (league: ScanLeague, at = new Date()): Promise<Map<string, TableSpot> | null> => {
+  if (!footballConfigured()) return null;
+  const data = await get<ApiStandingsLeague>(`/standings?league=${LEAGUE_IDS[league]}&season=${seasonOf(league, at)}`, STANDINGS_TTL);
+  const groups = data?.[0]?.league?.standings ?? [];
+  const table = new Map<string, TableSpot>();
+  for (const group of groups) {
+    for (const row of group) {
+      if (!row.team?.name || !row.rank) continue;
+      table.set(row.team.name, { rank: row.rank, of: group.length, points: row.points ?? 0, form: row.form ?? "" });
+    }
+  }
+  return table.size ? table : null;
+};
+
+/**
+ * Strict match for a lone team name (no opponent to cross-check against): every Kalshi word
+ * prefixes a word of the table's name, or abbreviates a run of them ("Man City" →
+ * "Manchester City", never "Manchester United"; "New York RB" → "New York Red Bulls").
+ */
+const strictSameTeam = (kalshi: string, table: string) => {
+  const k = tokens(kalshi);
+  const t = tokens(table);
+  const initials = (w: string) => w.length <= 3 && t.some((_, i) => t.slice(i, i + w.length).map((x) => x[0]).join("") === w);
+  return k.length > 0 && k.every((w) => t.some((x) => x.startsWith(w)) || initials(w));
+};
+
+/** A Kalshi team name's spot in a table. */
+export const spotOf = (table: Map<string, TableSpot>, team: string) => {
+  for (const [name, spot] of table) if (strictSameTeam(team, name)) return spot;
+  return null;
+};
+
 export interface FootballFacts {
   fixtureId: number;
   /** Verified stats, ready to cite (source "API-Football"). */

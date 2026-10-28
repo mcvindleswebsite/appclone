@@ -1,13 +1,25 @@
 import { checkAccess } from "@/lib/bet/access";
 import { fullKelly } from "@/lib/bet/bankroll";
 import { decimalToAmerican, kalshiDecimal, kalshiFee } from "@/lib/bet/engine";
+import { spotOf, standings, type TableSpot } from "@/lib/bet/football-api";
 import { describeVaultProfile } from "@/lib/bet/history";
 import { soccerCandidates, type SoccerCandidate } from "@/lib/bet/kalshi-api";
 import { BET_MODEL } from "@/lib/bet/model";
-import { failReason, marketWinProbability, MIN_VOLUME, minSharpEdge, SAFE_MIN_PROBABILITY, safeFailReason } from "@/lib/bet/picks";
+import {
+  failReason,
+  isMismatch,
+  marketWinProbability,
+  MISMATCH,
+  mismatchFailReason,
+  MIN_VOLUME,
+  minSharpEdge,
+  SAFE_MIN_PROBABILITY,
+  safeFailReason,
+  type TableMatchup,
+} from "@/lib/bet/picks";
 import { loadProfile } from "@/lib/bet/profile";
 import { researchLeg } from "@/lib/bet/research";
-import { isScanLeague, isTimeWindow, kickoffOf, SCAN_LEAGUES, windowRange, type ScanScope } from "@/lib/bet/scan-scope";
+import { isScanLeague, isTimeWindow, kickoffOf, SCAN_LEAGUES, windowRange, type ScanLeague, type ScanScope } from "@/lib/bet/scan-scope";
 import { sharpLines } from "@/lib/bet/sharp";
 import { redis } from "@/lib/bet/store";
 import { trackPicks } from "@/lib/bet/track";
@@ -20,9 +32,9 @@ const MAX_PICKS = 5;
 /** No league fills more than this many picks, so one busy midweek can't take over the list. */
 const MAX_PER_LEAGUE = 2;
 /**
- * AI research per scan is capped: every fixture is priced against the sharp books for free,
- * but only this many of the best candidates get a (paid) research call. Each call is up to
- * 2 web searches (~$0.02) plus Haiku tokens.
+ * AI research per scan is capped: every fixture is priced and filtered for free, but only this
+ * many of the best candidates get a (paid) research call. Each call is up to 2 web searches
+ * (~$0.02) plus Haiku tokens.
  */
 const RESEARCH_BUDGET = 15;
 const CONCURRENCY = 8;
@@ -31,13 +43,62 @@ const SCREEN_HARD_MS = 100_000;
 const CACHE_KEY = "vindle_soccer_recs";
 const CACHE_SECONDS = 30 * 60;
 
-type Candidate = SoccerCandidate & { sharp?: SharpLine };
-/**
- * "ai": picks rest on the AI's own estimate beating the Kalshi price (the books' price is
- * shown, not used). "sharp": picks need Kalshi cheaper than the sharp books; the AI only vetoes.
- */
-type PickMode = SoccerRecommendation["mode"] & string;
+type Candidate = SoccerCandidate & { sharp?: SharpLine; table?: TableMatchup };
+type PickMode = NonNullable<SoccerRecommendation["mode"]>;
 type Researched = { c: Candidate; a: LegAnalysis };
+
+const winChance = (c: Candidate) => marketWinProbability({ price: c.leg.price, volume: c.volume, sharp: c.sharp });
+
+/**
+ * How each Top Picks mode chooses. `eligible` runs before any AI cost; `order` decides who gets
+ * the research budget; `fails` is the bar after research; `probability` is what the pick rests on.
+ *
+ * - mismatch: a good-not-elite team against a bottom-third one, from the real league table.
+ * - safe: the likeliest winners (60%+ by the market's best price).
+ * - ai: the AI's own estimate beats the Kalshi price (the books' price is shown, not used).
+ * - sharp: Kalshi cheaper than the sharp books; the AI only vetoes.
+ */
+const STRATEGIES: Record<
+  PickMode,
+  {
+    minVolume: number;
+    eligible: (c: Candidate) => boolean;
+    order: (a: Candidate, b: Candidate) => number;
+    fails: (r: Researched) => string | null;
+    probability: (r: Researched) => number;
+  }
+> = {
+  mismatch: {
+    minVolume: MISMATCH.minVolume,
+    eligible: (c) => !c.futures && !!c.table && isMismatch(c.table) && winChance(c) >= MISMATCH.minProbability,
+    // Biggest table gap first, then the likelier winner.
+    order: (a, b) => b.table!.opponent.rank - b.table!.pick.rank - (a.table!.opponent.rank - a.table!.pick.rank) || winChance(b) - winChance(a),
+    fails: ({ c, a }) => mismatchFailReason({ price: c.leg.price, volume: c.volume, sharp: c.sharp }, a),
+    probability: ({ c }) => winChance(c),
+  },
+  safe: {
+    minVolume: MIN_VOLUME,
+    eligible: (c) => winChance(c) >= SAFE_MIN_PROBABILITY,
+    order: (a, b) => winChance(b) - winChance(a),
+    fails: ({ c, a }) => safeFailReason({ price: c.leg.price, volume: c.volume, sharp: c.sharp, futures: c.futures }, a),
+    probability: ({ c }) => winChance(c),
+  },
+  ai: {
+    minVolume: MIN_VOLUME,
+    eligible: () => true,
+    // The most-traded matches are the best-covered games.
+    order: (a, b) => b.volume - a.volume,
+    fails: ({ c, a }) => failReason({ price: c.leg.price, volume: c.volume, futures: c.futures }, a),
+    probability: ({ a }) => a.probability,
+  },
+  sharp: {
+    minVolume: MIN_VOLUME,
+    eligible: (c) => !c.sharp || c.sharp.edge >= minSharpEdge(c.volume),
+    order: (a, b) => (b.sharp?.edge ?? -1) - (a.sharp?.edge ?? -1),
+    fails: ({ c, a }) => failReason({ price: c.leg.price, volume: c.volume, sharp: c.sharp, futures: c.futures }, a),
+    probability: ({ c, a }) => c.sharp?.fair ?? a.probability,
+  },
+};
 
 const timeout = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
@@ -53,21 +114,46 @@ const screen = async (shortlist: Candidate[], history: string) => {
   return [...done];
 };
 
+const teamsOf = (matchup: string) => matchup.split(/\s+(?:vs\.?|v\.?|@|at)\s+/i).map((t) => t.trim());
+
+/** League-table spots for each candidate's pick and opponent (API-Football standings, cached). */
+const withTables = async (candidates: Candidate[]) => {
+  const leagues = [...new Set(candidates.map((c) => c.league))] as ScanLeague[];
+  const tables = new Map<string, Map<string, TableSpot> | null>(
+    await Promise.all(leagues.map(async (l) => [l, await standings(l).catch(() => null)] as const))
+  );
+  const out = candidates.map((c): Candidate => {
+    const table = tables.get(c.league);
+    const teams = teamsOf(c.leg.matchup);
+    if (!table || teams.length !== 2) return c;
+    const pickName = c.leg.pick;
+    const opponentName = teams.find((t) => t !== pickName) ?? "";
+    const pick = spotOf(table, pickName);
+    const opponent = spotOf(table, opponentName);
+    // A pick and opponent from different conferences (MLS) aren't on one table.
+    if (!pick || !opponent || pick === opponent || pick.of !== opponent.of) return c;
+    return { ...c, table: { pick: { rank: pick.rank, form: pick.form }, opponent: { rank: opponent.rank, form: opponent.form }, of: pick.of } };
+  });
+  const missing = leagues.filter((l) => !tables.get(l));
+  return { candidates: out, missing };
+};
+
 const percent = (n: number) => `${Math.round(n * 100)}%`;
 const pts = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)} pts`;
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th"}`;
 
 /**
- * The fixed pick record: fixture facts from Kalshi, probability from the sharp books when
- * they price the match (else the AI), line value computed here, analysis from the model.
+ * The fixed pick record: fixture facts from Kalshi, probability per the mode's strategy, line
+ * value computed here, analysis from the model.
  */
-const toPick = ({ c, a }: Researched, mode: PickMode): RecommendedLeg => {
+const toPick = (r: Researched, mode: PickMode): RecommendedLeg => {
+  const { c, a } = r;
   const price = c.leg.price!;
   const decimal = kalshiDecimal(price);
-  // AI mode always rests on the AI's estimate; the books' price is shown, never used.
-  // Safest Wins rests on the market's own win probability.
-  const basis = mode === "safe" ? "safe" : mode === "sharp" && c.sharp ? "sharp" : "ai";
-  const p = basis === "sharp" ? c.sharp!.fair : basis === "safe" ? marketWinProbability({ price, volume: c.volume, sharp: c.sharp }) : a.probability;
+  const basis = mode === "sharp" && !c.sharp ? "ai" : mode;
+  const p = STRATEGIES[mode].probability(r);
   const edge = basis === "sharp" ? c.sharp!.edge : p - price / 100 - kalshiFee(price / 100);
+  const opponent = teamsOf(c.leg.matchup).find((t) => t !== c.leg.pick) ?? "opponent";
   return {
     leg: c.leg,
     league: c.league,
@@ -78,13 +164,18 @@ const toPick = ({ c, a }: Researched, mode: PickMode): RecommendedLeg => {
     pick: c.leg.pick,
     odds: { kalshiCents: price, american: decimalToAmerican(decimal) },
     reasoningStats: [
+      ...(c.table
+        ? [
+            {
+              metric: "League table",
+              value: `${c.leg.pick} ${ordinal(c.table.pick.rank)} vs ${opponent} ${ordinal(c.table.opponent.rank)} of ${c.table.of}`,
+              source: "API-Football",
+            },
+          ]
+        : []),
       { metric: "Kalshi implied probability", value: percent(price / 100), source: "Kalshi" },
       ...(c.sharp ? [{ metric: "Sharp fair probability", value: percent(c.sharp.fair), source: c.sharp.source }] : []),
-      {
-        metric: "Edge after Kalshi fee",
-        value: pts(edge),
-        source: basis === "ai" ? "Vindle (vs AI estimate)" : "Vindle (vs sharp books)",
-      },
+      { metric: "Edge after Kalshi fee", value: pts(edge), source: basis === "ai" ? "Vindle (vs AI estimate)" : "Vindle (vs sharp books)" },
       { metric: "Kalshi volume", value: `$${Math.round(c.volume).toLocaleString("en-US")}`, source: "Kalshi" },
       ...(a.reasoningStats ?? []),
     ],
@@ -92,9 +183,11 @@ const toPick = ({ c, a }: Researched, mode: PickMode): RecommendedLeg => {
     historyFlag: a.historyFlag ?? "",
     basis,
     ...(c.sharp ? { sharp: c.sharp } : {}),
+    ...(c.table ? { table: c.table } : {}),
+    ...(c.volume < MIN_VOLUME ? { thin: true } : {}),
     aiProbability: a.probability,
     deep: false,
-    footballData: false,
+    footballData: !!c.table,
     kelly: fullKelly(p, decimal),
     volume: c.volume,
     modelProbability: p,
@@ -108,61 +201,56 @@ const toPick = ({ c, a }: Researched, mode: PickMode): RecommendedLeg => {
 };
 
 const edgeOf = (l: RecommendedLeg) => l.modelProbability - l.marketProbability - kalshiFee(l.marketProbability);
-const rank = (a: RecommendedLeg, b: RecommendedLeg) =>
-  // Safest Wins: most likely winner first.
-  (a.basis === "safe" && b.basis === "safe" ? b.modelProbability - a.modelProbability || b.confidenceRating - a.confidenceRating : 0) ||
-  // Sharp-anchored edges are measured against the market's best price; they rank first.
-  Number(b.basis === "sharp") - Number(a.basis === "sharp") || edgeOf(b) - edgeOf(a) || b.confidenceRating - a.confidenceRating;
 
-/** Best picks first, at most MAX_PER_LEAGUE from any one league. */
+/** Final ordering, per mode: the same order the research budget was spent in. */
+const rank = (mode: PickMode) => (a: RecommendedLeg, b: RecommendedLeg) => {
+  if (mode === "mismatch" && a.table && b.table) {
+    return b.table.opponent.rank - b.table.pick.rank - (a.table.opponent.rank - a.table.pick.rank) || b.modelProbability - a.modelProbability;
+  }
+  if (mode === "safe") return b.modelProbability - a.modelProbability || b.confidenceRating - a.confidenceRating;
+  // Sharp-anchored edges are measured against the market's best price; they rank first.
+  return Number(b.basis === "sharp") - Number(a.basis === "sharp") || edgeOf(b) - edgeOf(a) || b.confidenceRating - a.confidenceRating;
+};
+
+/** Best picks first: at most MAX_PER_LEAGUE from one league, and one pick per team. */
 const spread = (picks: RecommendedLeg[]) => {
   const perLeague = new Map<string, number>();
+  const teams = new Set<string>();
   return picks.filter((p) => {
     const n = perLeague.get(p.league) ?? 0;
-    if (n >= MAX_PER_LEAGUE) return false;
+    const team = p.pick.toLowerCase();
+    if (n >= MAX_PER_LEAGUE || teams.has(team)) return false;
     perLeague.set(p.league, n + 1);
+    teams.add(team);
     return true;
   });
 };
 
 const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMode): Promise<SoccerRecommendation> => {
   const history = describeVaultProfile(profile);
+  const strategy = STRATEGIES[mode];
 
-  // 1. Every active fixture in scope, priced against the sharp books (free, no AI).
+  // 1. Every active fixture in scope, priced against the sharp books (free, no AI), and for
+  //    Mismatches placed on the real league table.
   const raw = await soccerCandidates(scope);
   const sharp = await sharpLines(raw);
-  const candidates: Candidate[] = raw.map((c) => {
+  const priced: Candidate[] = raw.map((c) => {
     const line = c.leg.ticker ? sharp.lines.get(c.leg.ticker) : undefined;
     return line ? { ...c, sharp: line } : c;
   });
+  const tabled = mode === "mismatch" ? await withTables(priced) : { candidates: priced, missing: [] as ScanLeague[] };
+  const candidates = tabled.candidates;
 
-  // 2. Drop what can't be a pick before paying for research: thin markets, and (price-edge
-  //    mode only) matches the books price where Kalshi isn't cheaper by enough.
-  const thin = candidates.filter((c) => !c.futures && c.volume < MIN_VOLUME).length;
-  const liquid = candidates.filter((c) => c.futures || c.volume >= MIN_VOLUME);
-  const priced =
-    mode === "ai"
-      ? liquid
-      : mode === "safe"
-        ? // Only clear favorites are worth researching; coin flips never make the list.
-          liquid.filter((c) => marketWinProbability({ price: c.leg.price, volume: c.volume, sharp: c.sharp }) >= SAFE_MIN_PROBABILITY)
-        : liquid.filter((c) => !c.sharp || c.sharp.edge >= minSharpEdge(c.volume));
-  const noPriceEdge = mode === "sharp" ? liquid.length - priced.length : 0;
+  // 2. Drop what can't be a pick before paying for research.
+  const thin = candidates.filter((c) => !c.futures && c.volume < strategy.minVolume).length;
+  const liquid = candidates.filter((c) => c.futures || c.volume >= strategy.minVolume);
+  const eligible = liquid.filter(strategy.eligible);
+  const noPriceEdge = mode === "sharp" ? liquid.length - eligible.length : 0;
 
-  // 3. Research the best RESEARCH_BUDGET, no more than a few per league so one league can't
-  //    use up the budget. AI mode takes the most-traded matches (the best-covered games);
-  //    price-edge mode the biggest price gaps first.
+  // 3. Research the best RESEARCH_BUDGET in the mode's order, no more than a few per league.
   const perLeague = new Map<string, number>();
-  const shortlist = [...priced]
-    .sort(
-      (a, b) =>
-        (mode === "sharp"
-          ? (b.sharp?.edge ?? -1) - (a.sharp?.edge ?? -1)
-          : mode === "safe"
-            ? marketWinProbability({ price: b.leg.price, volume: b.volume, sharp: b.sharp }) -
-              marketWinProbability({ price: a.leg.price, volume: a.volume, sharp: a.sharp })
-            : 0) || b.volume - a.volume
-    )
+  const shortlist = [...eligible]
+    .sort((a, b) => strategy.order(a, b) || b.volume - a.volume)
     .filter((c) => {
       const n = perLeague.get(c.league) ?? 0;
       if (n >= 4) return false;
@@ -170,17 +258,13 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
       return true;
     })
     .slice(0, RESEARCH_BUDGET);
-  const unresearched = priced.length - shortlist.length;
+  const unresearched = eligible.length - shortlist.length;
   const screened = await screen(shortlist, history);
 
   const qualified = screened
-    .filter((r) => {
-      const input = { price: r.c.leg.price, volume: r.c.volume, futures: r.c.futures };
-      if (mode === "safe") return safeFailReason({ ...input, sharp: r.c.sharp }, r.a) === null;
-      return failReason({ ...input, sharp: mode === "sharp" ? r.c.sharp : undefined }, r.a) === null;
-    })
+    .filter((r) => strategy.fails(r) === null)
     .map((r) => toPick(r, mode))
-    .sort(rank);
+    .sort(rank(mode));
   const legs = spread(qualified).slice(0, MAX_PICKS);
 
   let parlay: SoccerRecommendation["parlay"] = null;
@@ -191,6 +275,14 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
   }
 
   const insufficient = screened.filter((r) => r.a.researched && !r.a.dataSufficient && (mode === "ai" || !r.c.sharp)).length;
+  const valueNote =
+    (mode === "safe" || mode === "mismatch") && legs.length
+      ? `${mode === "safe" ? "Safest Wins" : "Mismatches"} picks on the matchup, not the price: these average ${pts(
+          legs.reduce((s, l) => s + l.ev, 0) / legs.length
+        ).replace(" pts", "%")} EV each at Kalshi's prices, and a ${legs.length}-leg parlay of them hits about ${percent(
+          legs.reduce((acc, l) => acc * l.modelProbability, 1)
+        )} of the time.`
+      : null;
   return {
     legs,
     parlay,
@@ -209,17 +301,20 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
     generatedAt: new Date().toISOString(),
     note:
       [
-        legs.length === 0 ? "Nothing cleared the bar this scan — no pick beats a forced one." : null,
-        mode === "safe" && legs.length
-          ? `Safest Wins ranks by win chance, not value: at Kalshi's prices these average ${pts(
-              legs.reduce((s, l) => s + l.ev, 0) / legs.length
-            ).replace(" pts", "%")} EV each, and a ${legs.length}-leg parlay of them hits about ${percent(
-              legs.reduce((acc, l) => acc * l.modelProbability, 1)
-            )} of the time.`
+        legs.length === 0
+          ? mode === "mismatch"
+            ? `No mismatches this scan: no non-top-3 favorite facing a bottom-third side by ${Math.round(MISMATCH.minGapShare * 100)}%+ of the table.`
+            : "Nothing cleared the bar this scan — no pick beats a forced one."
+          : null,
+        valueNote,
+        mode === "mismatch" && tabled.missing.length
+          ? `No league table from API-Football for ${tabled.missing.join(", ")}${
+              process.env.FOOTBALL_API_KEY ? " (the plan may not cover this season)" : " (FOOTBALL_API_KEY not set)"
+            } — those matches can't be checked.`
           : null,
         noPriceEdge ? `${noPriceEdge} match${noPriceEdge === 1 ? "" : "es"} skipped: Kalshi wasn't cheaper than the sharp books.` : null,
-        thin ? `${thin} market${thin === 1 ? "" : "s"} under $${MIN_VOLUME.toLocaleString("en-US")} traded skipped as too thin.` : null,
-        unresearched ? `${unresearched} weaker candidate${unresearched === 1 ? "" : "s"} not researched (budget ${RESEARCH_BUDGET} a scan).` : null,
+        thin ? `${thin} market${thin === 1 ? "" : "s"} under $${strategy.minVolume.toLocaleString("en-US")} traded skipped as too thin.` : null,
+        unresearched ? `${unresearched} more candidate${unresearched === 1 ? "" : "s"} not researched (budget ${RESEARCH_BUDGET} a scan).` : null,
         insufficient ? `${insufficient} had too little verifiable data to rate.` : null,
         sharp.configured || mode !== "sharp" ? null : "Sharp-book pricing is OFF (ODDS_API_KEY not set): every pick rests on the AI alone.",
       ]
@@ -273,7 +368,7 @@ export async function POST(request: Request) {
   const fresh = new URL(request.url).searchParams.get("fresh") === "1";
   const body = ((await request.json().catch(() => null)) ?? {}) as Body;
   const scope = readScope(body);
-  const mode: PickMode = body.mode === "sharp" || body.mode === "safe" ? body.mode : "ai";
+  const mode: PickMode = body.mode === "sharp" || body.mode === "safe" || body.mode === "ai" ? body.mode : "mismatch";
   const profile = await loadProfile(body.history);
   const key = cacheKey(scope, describeVaultProfile(profile), mode);
   if (!fresh) {
