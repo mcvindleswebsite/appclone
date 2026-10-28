@@ -1,4 +1,4 @@
-/** A song picked from Apple Music. `id` is the catalog song id (the same number as an iTunes trackId). */
+/** A song picked from the iTunes catalog (`id` is its trackId), played through a YouTube video. */
 export interface SongMeta {
   id: string;
   title: string;
@@ -7,8 +7,10 @@ export interface SongMeta {
   /** High-res album artwork URL. */
   artwork: string;
   durationMs: number;
-  /** 30-second preview clip, played when Apple Music isn't connected. */
+  /** 30-second iTunes preview, played when no YouTube video is linked. */
   previewUrl: string | null;
+  /** The YouTube video that plays the full track; line times follow this video. */
+  youtubeId: string | null;
 }
 
 export interface LyricLine {
@@ -44,6 +46,14 @@ export interface LyricsSource {
   /** True when the timestamps came from LRCLIB synced lyrics. */
   synced: boolean;
   instrumental: boolean;
+}
+
+export interface VideoCandidate {
+  id: string;
+  title: string;
+  channel: string;
+  thumbnail: string;
+  durationSec: number;
 }
 
 export interface ParodyAssistRequest {

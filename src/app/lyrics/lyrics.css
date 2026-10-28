@@ -1,63 +1,214 @@
-.lyrics-app {
-  font-family: var(--font-inter), system-ui, sans-serif;
+/*
+ * /lyrics uses the iPod menu palette from the home page (src/components/sites/ipod/ipod.module.css):
+ * white screen, brushed-silver title bar, the blue selection gradient, gray sublabels, and the
+ * glossy blue progress bar. Dark mode follows the OS (the iPod's Black finish) unless the
+ * page's toggle sets data-theme.
+ */
+.lx {
+  --lx-page: linear-gradient(180deg, #e3e3e3 0%, #d6d6d6 100%);
+  --lx-screen: #ffffff;
+  --lx-border: #b9b9b9;
+  --lx-divider: #e2e2e2;
+  --lx-text: #000000;
+  --lx-sub: rgb(100, 100, 100);
+  --lx-faint: rgb(160, 160, 160);
+  --lx-accent: rgb(52, 122, 181);
+  --lx-hover: rgba(60, 184, 255, 0.12);
+  --lx-bar: linear-gradient(180deg, #feffff 0%, #b1b6b9 100%);
+  --lx-bar-rule: #7995a3;
+  --lx-panel: linear-gradient(180deg, #b1b5c0 0%, #686e7a 100%);
+  --lx-input: #ffffff;
+  --lx-warn: #b86e00;
+  --lx-danger: #c9302c;
+  --lx-select: linear-gradient(180deg, rgb(60, 184, 255) 0%, rgb(52, 122, 181) 100%);
+
+  min-height: 100dvh;
+  background: var(--lx-page);
+  background-attachment: fixed;
+  color: var(--lx-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans",
+    "Helvetica Neue", sans-serif;
+  color-scheme: light;
 }
 
-.lyrics-input {
-  min-height: 2.25rem;
+.lx[data-theme="dark"] {
+  --lx-page: linear-gradient(180deg, #2a2a2b 0%, #0d0d0e 100%);
+  --lx-screen: #161617;
+  --lx-border: #3a3a3c;
+  --lx-divider: #2a2a2c;
+  --lx-text: #ffffff;
+  --lx-sub: rgba(255, 255, 255, 0.6);
+  --lx-faint: rgba(255, 255, 255, 0.35);
+  --lx-accent: rgb(60, 184, 255);
+  --lx-hover: rgba(60, 184, 255, 0.14);
+  --lx-bar: linear-gradient(180deg, #5a5d61 0%, #232527 100%);
+  --lx-bar-rule: #000000;
+  --lx-panel: linear-gradient(180deg, #4a4e57 0%, #23262c 100%);
+  --lx-input: #0d0d0e;
+  --lx-warn: #ffb020;
+  --lx-danger: #ff453a;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lx:not([data-theme="light"]) {
+    --lx-page: linear-gradient(180deg, #2a2a2b 0%, #0d0d0e 100%);
+    --lx-screen: #161617;
+    --lx-border: #3a3a3c;
+    --lx-divider: #2a2a2c;
+    --lx-text: #ffffff;
+    --lx-sub: rgba(255, 255, 255, 0.6);
+    --lx-faint: rgba(255, 255, 255, 0.35);
+    --lx-accent: rgb(60, 184, 255);
+    --lx-hover: rgba(60, 184, 255, 0.14);
+    --lx-bar: linear-gradient(180deg, #5a5d61 0%, #232527 100%);
+    --lx-bar-rule: #000000;
+    --lx-panel: linear-gradient(180deg, #4a4e57 0%, #23262c 100%);
+    --lx-input: #0d0d0e;
+    --lx-warn: #ffb020;
+    --lx-danger: #ff453a;
+    color-scheme: dark;
+  }
+}
+
+/* The iPod title bar: brushed silver with a blue-gray rule. */
+.lx-bar {
+  background: var(--lx-bar);
+  border-bottom: 1px solid var(--lx-bar-rule);
+}
+.lx-bar-top {
+  background: var(--lx-bar);
+  border-top: 1px solid var(--lx-bar-rule);
+}
+
+/* The iPod screen: a white (or black) card with the device's bezel line. */
+.lx-screen {
+  background: var(--lx-screen);
+  border: 1px solid var(--lx-border);
   border-radius: 0.5rem;
-  border: 1px solid #1e2638;
-  background: #050d0a;
-  padding: 0.375rem 0.75rem;
-  font-size: 0.875rem;
-  color: #fff;
-  outline: none;
-  transition: border-color 150ms;
-}
-.lyrics-input::placeholder {
-  color: rgb(245 247 244 / 0.35);
-}
-.lyrics-input:focus {
-  border-color: rgb(0 221 148 / 0.6);
+  overflow: hidden;
 }
 
-.lyrics-chip {
+/* A menu row; data-active gives the blue selection gradient with white text. */
+.lx-row {
+  transition: background-color 120ms;
+}
+.lx-row:hover {
+  background-color: var(--lx-hover);
+}
+.lx-row[data-active="true"] {
+  background: var(--lx-select);
+  color: #ffffff;
+}
+.lx-row[data-active="true"] .lx-sub,
+.lx-row[data-active="true"] .lx-accent {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.lx-sub {
+  color: var(--lx-sub);
+}
+.lx-faint {
+  color: var(--lx-faint);
+}
+.lx-accent {
+  color: var(--lx-accent);
+}
+.lx-warn {
+  color: var(--lx-warn);
+}
+.lx-danger {
+  color: var(--lx-danger);
+}
+.lx-divide > * + * {
+  border-top: 1px solid var(--lx-divider);
+}
+
+/* Primary button: the selection gradient. */
+.lx-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  background: var(--lx-select);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.lx-button:disabled {
+  opacity: 0.5;
+}
+
+.lx-chip {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
   border-radius: 9999px;
-  border: 1px solid #1e2638;
-  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--lx-border);
+  background: var(--lx-bar);
+  padding: 0.2rem 0.625rem;
   font-size: 0.75rem;
-  color: rgb(245 247 244 / 0.75);
-  transition: border-color 150ms;
+  color: var(--lx-text);
 }
-.lyrics-chip:hover {
-  border-color: rgb(0 221 148 / 0.5);
+.lx-chip:hover {
+  border-color: var(--lx-accent);
 }
 
-/* Thin green-filled range: --fill is the played portion. */
-.lyrics-range {
-  appearance: none;
-  height: 4px;
-  border-radius: 9999px;
-  background: linear-gradient(to right, #00dd94 var(--fill, 0%), #1e2638 var(--fill, 0%));
+.lx-input {
+  min-height: 2.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--lx-border);
+  background: var(--lx-input);
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--lx-text);
+  outline: none;
+}
+.lx-input::placeholder {
+  color: var(--lx-faint);
+}
+.lx-input:focus {
+  border-color: var(--lx-accent);
+  box-shadow: 0 0 0 2px var(--lx-hover);
+}
+
+/* The iPod Now Playing bar: gloss track, gloss-blue fill, diamond knob. A transparent range
+   input sits on top for dragging and keyboard control. */
+.lx-scrub {
+  position: relative;
+  height: 14px;
+}
+.lx-scrub-track {
+  position: absolute;
+  inset: 0;
+  background: url("/sites/ipod/gloss-overlay.svg") repeat-x;
+  background-size: contain;
+  border: 1px solid var(--lx-border);
+}
+.lx-scrub-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: url("/sites/ipod/gloss-blue.svg") repeat-x;
+  background-size: contain;
+}
+.lx-scrub-knob {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.lx-scrub input {
+  position: absolute;
+  inset: -6px 0;
+  width: 100%;
+  opacity: 0;
   cursor: pointer;
 }
-.lyrics-range::-webkit-slider-thumb {
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 9999px;
-  background: #fff;
-}
-.lyrics-range::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border: 0;
-  border-radius: 9999px;
-  background: #fff;
-}
-.lyrics-range:disabled {
-  opacity: 0.4;
+.lx-scrub input:disabled {
   cursor: default;
 }

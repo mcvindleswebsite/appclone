@@ -1,9 +1,9 @@
 import { checkLyricsAccess } from "@/lib/lyrics/access";
-import { searchSongs } from "@/lib/lyrics/apple-music";
+import { searchSongs } from "@/lib/lyrics/itunes";
 
 export const dynamic = "force-dynamic";
 
-/** Song search for the editor: Apple Music catalog, falling back to iTunes Search. */
+/** Song search for the editor, from the iTunes catalog. */
 export async function GET(request: Request) {
   const denied = checkLyricsAccess(request);
   if (denied) return denied;

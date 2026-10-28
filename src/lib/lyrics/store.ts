@@ -1,4 +1,5 @@
 import { redis } from "@/lib/bet/store";
+import { isYouTubeId } from "@/lib/lyrics/youtube-id";
 import { MAX_CHUNKS, MAX_LINE_CHARS, MAX_LINES_PER_CHUNK, type LyricChunk, type Parody, type SongMeta } from "@/types/lyrics";
 
 export const PARODIES_KEY = "vindle_lyrics_parodies";
@@ -27,6 +28,7 @@ export const sanitizeParody = (value: unknown): Parody | null => {
     artwork: httpsUrl(s.artwork),
     durationMs: Math.max(0, num(s.durationMs, 0)),
     previewUrl: httpsUrl(s.previewUrl) || null,
+    youtubeId: isYouTubeId(s.youtubeId) ? s.youtubeId : null,
   };
   const chunks: LyricChunk[] = p.chunks.slice(0, MAX_CHUNKS).flatMap((raw) => {
     if (!raw || typeof raw !== "object") return [];
