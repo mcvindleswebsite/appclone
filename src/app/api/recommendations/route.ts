@@ -33,6 +33,8 @@ export const maxDuration = 120;
 const MAX_PICKS = 5;
 /** No league fills more than this many picks, so one busy midweek can't take over the list. */
 const MAX_PER_LEAGUE = 2;
+/** AI Picks returns a wider pool, so the parlay builder can find legs for a target payout. */
+const OPINION_POOL = { picks: 10, perLeague: 3 };
 /**
  * AI research per scan is capped: every fixture is priced and filtered for free, but only this
  * many of the best candidates get a (paid) research call. Each call is up to 2 web searches
@@ -73,8 +75,9 @@ const STRATEGIES: Record<
   opinion: {
     minVolume: OPINION.minVolume,
     eligible: (c) => winChance(c) >= OPINION.minMarket,
-    // Research the clearest favorites first, so the budget goes where the AI is likeliest to agree.
-    order: (a, b) => winChance(b) - winChance(a),
+    // Research the parlay sweet spot first (around 60%, ~1.6x a leg): legs that actually move a
+    // payout. Near-locks pay too little to matter in a parlay and come last.
+    order: (a, b) => Math.abs(winChance(a) - OPINION.sweetSpot) - Math.abs(winChance(b) - OPINION.sweetSpot),
     fails: ({ c, a }) => opinionFailReason({ price: c.leg.price, volume: c.volume, futures: c.futures }, a),
     probability: ({ a }) => a.probability,
   },
@@ -225,14 +228,14 @@ const rank = (mode: PickMode) => (a: RecommendedLeg, b: RecommendedLeg) => {
   return Number(b.basis === "sharp") - Number(a.basis === "sharp") || edgeOf(b) - edgeOf(a) || b.confidenceRating - a.confidenceRating;
 };
 
-/** Best picks first: at most MAX_PER_LEAGUE from one league, and one pick per team. */
-const spread = (picks: RecommendedLeg[]) => {
+/** Best picks first: at most `perLeague` from one league, and one pick per team. */
+const spread = (picks: RecommendedLeg[], perLeagueCap = MAX_PER_LEAGUE) => {
   const perLeague = new Map<string, number>();
   const teams = new Set<string>();
   return picks.filter((p) => {
     const n = perLeague.get(p.league) ?? 0;
     const team = p.pick.toLowerCase();
-    if (n >= MAX_PER_LEAGUE || teams.has(team)) return false;
+    if (n >= perLeagueCap || teams.has(team)) return false;
     perLeague.set(p.league, n + 1);
     teams.add(team);
     return true;
@@ -278,7 +281,10 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
     .filter((r) => strategy.fails(r) === null)
     .map((r) => toPick(r, mode))
     .sort(rank(mode));
-  const legs = spread(qualified).slice(0, MAX_PICKS);
+  const legs =
+    mode === "opinion"
+      ? spread(qualified, OPINION_POOL.perLeague).slice(0, OPINION_POOL.picks)
+      : spread(qualified).slice(0, MAX_PICKS);
 
   let parlay: SoccerRecommendation["parlay"] = null;
   if (legs.length >= 2) {
@@ -292,8 +298,8 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
   const aiFailed = screened.length > 0 && screened.every((r) => !r.a.researched);
   const tradable = candidates.filter((c) => c.volume >= MIN_VOLUME).length;
   const valueNote =
-    (mode === "safe" || mode === "mismatch" || mode === "opinion") && legs.length
-      ? `${{ safe: "Safest Wins", mismatch: "Mismatches", opinion: "AI Picks" }[mode]} picks on who wins, not the price: these average ${pts(
+    (mode === "safe" || mode === "mismatch") && legs.length
+      ? `${mode === "safe" ? "Safest Wins" : "Mismatches"} picks on who wins, not the price: these average ${pts(
           legs.reduce((s, l) => s + l.ev, 0) / legs.length
         ).replace(" pts", "%")} EV each at Kalshi's prices, and a ${legs.length}-leg parlay of them hits about ${percent(
           legs.reduce((acc, l) => acc * l.modelProbability, 1)

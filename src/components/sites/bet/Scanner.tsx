@@ -4,7 +4,8 @@ import { ArrowRightLeft, Hourglass, Loader2, Microscope, Radar, RefreshCw, Vault
 import { useEffect, useState } from "react";
 
 import { adviseStake, type BankrollSettings } from "@/lib/bet/bankroll";
-import { decimalToAmerican, formatAmerican, kalshiDecimal } from "@/lib/bet/engine";
+import { decimalToAmerican, kalshiDecimal } from "@/lib/bet/engine";
+import { buildParlay, PAYOUT_TARGETS } from "@/lib/bet/parlay-builder";
 import { DEFAULT_WAGER, formatMoney } from "@/lib/bet/pnl";
 import {
   kickoffOf,
@@ -178,7 +179,9 @@ export function Scanner({
   /** Saves each leg as its own single at its own stake; returns a status line. */
   onLogSingles: (rec: SoccerRecommendation, stakes: number[]) => string;
 }) {
-  const [mode, setMode] = useState<"singles" | "parlay">("singles");
+  const [mode, setMode] = useState<"singles" | "parlay">("parlay");
+  /** Parlay payout to build toward (× stake). */
+  const [target, setTarget] = useState<number>(10);
   /**
    * What a pick rests on: who the AI thinks wins (default), a good team against a
    * bottom-third one, the likeliest winners, or a price edge vs the sharp books.
@@ -267,8 +270,14 @@ export function Scanner({
 
   const windowLabel = TIME_WINDOWS.find((w) => w.id === frame)!.label;
   const shown = rec ? rec.legs.filter((l) => inScope(l, frame, leagues, now)) : [];
-  const parlay = parlayOf(shown);
-  const ticket: SoccerRecommendation | null = rec ? { ...rec, legs: shown, parlay } : null;
+  // Parlay mode: the combination of picks likeliest to hit that still pays the target.
+  const built = mode === "parlay" ? buildParlay(shown.filter((l) => !l.vetoed), target) : null;
+  const parlayLegs = built?.legs ?? shown;
+  const parlay = parlayOf(parlayLegs);
+  const ticket: SoccerRecommendation | null = rec ? { ...rec, legs: shown, parlay: parlayOf(shown) } : null;
+  const parlayTicket: SoccerRecommendation | null = rec ? { ...rec, legs: parlayLegs, parlay } : null;
+  /** The legs listed: the built parlay's in parlay mode, every pick for singles. */
+  const listed = mode === "parlay" && built ? parlayLegs : shown;
   // The last scan covered a different timeframe or leagues than the ones picked now.
   const stale =
     !!rec?.scope &&
@@ -317,7 +326,6 @@ export function Scanner({
     return { amount, advice };
   });
   const singlesTotal = singleStakes.reduce((s, x) => s + x.amount, 0);
-  const avgSingleEv = shown.length ? shown.reduce((s, l) => s + l.ev, 0) / shown.length : 0;
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -461,24 +469,51 @@ export function Scanner({
                       mode === m ? "bg-(--accent) text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
                     )}
                   >
-                    {m === "singles" ? "Singles (recommended)" : `${shown.length}-Leg Parlay`}
+                    {m === "singles" ? "Singles" : "Money Parlay"}
                   </button>
                 ))}
               </div>
             )}
-            {mode === "parlay" && parlay && (
-              <p className={cn("text-[11px]", T.muted)}>
-                A parlay pays Kalshi&apos;s fee on every leg and one miss loses it all: parlay EV {signedPct(parlay.ev)} on one
-                stake vs {signedPct(avgSingleEv)} per single, spread over {shown.length} independent bets.
-              </p>
+            {mode === "parlay" && shown.length >= 2 && (
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={T.label}>Target payout</span>
+                  {PAYOUT_TARGETS.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={target === t}
+                      onClick={() => {
+                        setTarget(t);
+                        setLogged(null);
+                      }}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
+                        target === t
+                          ? "border-(--accent)/60 bg-(--accent-deep) text-(--accent)"
+                          : "border-[#1E2638] bg-[#050D0A] text-[#F5F7F4]/60 hover:text-white"
+                      )}
+                    >
+                      {t}×
+                    </button>
+                  ))}
+                </div>
+                {built && (
+                  <p className="text-xs text-[#F5F7F4]/85">
+                    {built.reached
+                      ? `Built from ${shown.length} AI picks: the ${built.legs.length} legs most likely to hit that still pay ${target}×.`
+                      : `No combination of these ${shown.length} picks reaches ${target}× — this is the biggest available (${built.decimal.toFixed(1)}×). Scan This Week for more legs.`}
+                  </p>
+                )}
+              </div>
             )}
             {mode === "parlay" && parlay && (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
-                  { label: "Win Prob", value: pct(parlay.probability, parlay.probability < 0.1 ? 1 : 0) },
-                  { label: "Est. Odds", value: formatAmerican(parlay.american) },
+                  { label: `${formatMoney(stake || 10)} Pays`, value: formatMoney(parlay.decimal * (stake || 10)) },
+                  { label: "Payout", value: `${parlay.decimal.toFixed(1)}×` },
+                  { label: "AI Hit Chance", value: pct(parlay.probability, parlay.probability < 0.1 ? 1 : 0) },
                   { label: "Parlay EV", value: signedPct(parlay.ev), tone: parlay.ev > 0 ? T.yes : T.no },
-                  { label: "$10 Pays", value: formatMoney(parlay.decimal * 10) },
                 ].map((s) => (
                   <div key={s.label} className={cn(T.inset, "p-3")}>
                     <p className={T.label}>{s.label}</p>
@@ -498,7 +533,7 @@ export function Scanner({
               </p>
             ) : (
               <ol className="flex flex-col divide-y divide-[#1E2638] overflow-hidden rounded-xl border border-[#1E2638]">
-                {shown.map((l, i) => (
+                {listed.map((l, i) => (
                   <li key={l.leg.ticker ?? i} className="flex flex-col gap-1.5 bg-[#050D0A] p-3">
                     <div className="flex items-start gap-2">
                       <span className="font-kalshi-bold w-5 shrink-0 pt-0.5 text-xs text-[#F5F7F4]/50">{i + 1}</span>
@@ -702,7 +737,7 @@ export function Scanner({
             <div className={cn(T.card, "flex flex-col gap-3 p-4 sm:p-5")}>
               <button
                 type="button"
-                onClick={() => onImport(ticket)}
+                onClick={() => parlayTicket && onImport(parlayTicket)}
                 className="font-kalshi-bold flex min-h-12 items-center justify-center gap-2 rounded-xl bg-(--accent) text-sm text-[#050D0A] hover:brightness-110"
               >
                 <ArrowRightLeft className="size-4" /> Import to Slip
@@ -721,13 +756,13 @@ export function Scanner({
                 <button
                   type="button"
                   disabled={!stake}
-                  onClick={() => setLogged(onLog(ticket, stake))}
+                  onClick={() => parlayTicket && setLogged(onLog(parlayTicket, stake))}
                   className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-[#1E2638] px-4 text-sm font-semibold hover:bg-(--accent-deep) disabled:opacity-40"
                 >
                   <Vault className="size-4" /> Log to Vault
                   {stake > 0 &&
                     ` · ${formatMoney(stake)} pays ${formatMoney(
-                      stake * shown.reduce((acc, l) => acc * kalshiDecimal(l.leg.price ?? 50), 1)
+                      stake * parlayLegs.reduce((acc, l) => acc * kalshiDecimal(l.leg.price ?? 50), 1)
                     )}`}
                 </button>
               </div>

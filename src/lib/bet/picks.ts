@@ -73,12 +73,16 @@ export const mismatchFailReason = (input: PickInput, a: LegAnalysis): string | n
  * test: the pick shows its EV, but the AI's belief and confidence are what qualify it.
  */
 export const OPINION = {
-  /** The AI has to rate the pick at least this likely to win. */
-  minProbability: 0.6,
+  /** The AI has to back the pick to win: better than a coin flip. */
+  minProbability: 0.5,
   /** And be at least this sure of that estimate (1-10). */
   minConfidence: 5,
-  /** Only favorites the market rates this high are worth researching. */
-  minMarket: 0.45,
+  /**
+   * The market range researched. Parlay legs that pay come from the 45-75% band (about 1.3-2.1x
+   * each); near-locks pay too little to move a parlay and are researched last.
+   */
+  minMarket: 0.42,
+  sweetSpot: 0.6,
   /** Thin leagues (Saudi) are allowed down to this; the pick is flagged as thin. */
   minVolume: 200,
 } as const;
