@@ -21,6 +21,7 @@ import {
   type SuggestionId,
 } from "./designEngine";
 import { FurnitureModel } from "./FurnitureModels";
+import { DEFAULT_COLORS, type ColorTarget, type RoomColors } from "./roomColors";
 import { RoomShell } from "./RoomShell";
 import {
   ADDITIONS,
@@ -42,6 +43,7 @@ type Added = Record<SuggestionId, boolean>;
 
 const LAYOUT_KEY = "room-layout-v1";
 const ADDED_KEY = "room-additions-v1";
+const COLORS_KEY = "room-colors-v1";
 const NO_ADDITIONS: Added = { areaRug: false, uplight: false, accentTextiles: false, floatingShelf: false };
 const SELECT_COLOR = "#7dd3fc";
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -80,6 +82,23 @@ function loadAdded(): Added {
   return NO_ADDITIONS;
 }
 
+function loadColors(): RoomColors {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLORS_KEY) ?? "null") as Partial<RoomColors> | null;
+    if (saved) {
+      return Object.fromEntries(
+        Object.entries(DEFAULT_COLORS).map(([k, v]) => {
+          const c = saved[k as ColorTarget];
+          return [k, typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c) ? c : v];
+        }),
+      ) as RoomColors;
+    }
+  } catch {
+    // Ignore unreadable storage.
+  }
+  return DEFAULT_COLORS;
+}
+
 const cm = (m: number) => Math.round(m * 100);
 
 function setControlsEnabled(get: () => RootState, enabled: boolean) {
@@ -94,6 +113,7 @@ function DraggableItem({
   selected,
   showDims,
   accentTextiles,
+  colors,
   onSelect,
   onMove,
   onDragChange,
@@ -104,6 +124,7 @@ function DraggableItem({
   selected: boolean;
   showDims: boolean;
   accentTextiles: boolean;
+  colors: RoomColors;
   onSelect: (id: string) => void;
   onMove: (id: string, x: number, z: number) => void;
   onDragChange: (dragging: boolean) => void;
@@ -177,7 +198,7 @@ function DraggableItem({
         if (!drag.current) document.body.style.cursor = "auto";
       }}
     >
-      <FurnitureModel item={item} accentTextiles={accentTextiles} />
+      <FurnitureModel item={item} accentTextiles={accentTextiles} colors={colors} />
 
       {/* Spatial feedback: red footprint in tight/blocked spots, green in harmony zones. */}
       {(feedback || selected) && (
@@ -301,6 +322,7 @@ function ToolButton({
 export function RoomEditor() {
   const [layout, setLayout] = useState<Layout>(loadLayout);
   const [added, setAdded] = useState<Added>(loadAdded);
+  const [colors, setColors] = useState<RoomColors>(loadColors);
   const [selected, setSelected] = useState<string | null>(null);
   const [snap, setSnap] = useState(true);
   const [showDims, setShowDims] = useState(false);
@@ -318,6 +340,13 @@ export function RoomEditor() {
   useEffect(() => {
     localStorage.setItem(ADDED_KEY, JSON.stringify(added));
   }, [added]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLORS_KEY, JSON.stringify(colors));
+    } catch {
+      // Storage full or blocked: colors just won't persist.
+    }
+  }, [colors]);
 
   // Additions join the scene once they have a placement.
   const items = useMemo(
@@ -452,7 +481,7 @@ export function RoomEditor() {
         <pointLight position={[-0.05, 1.6, -1.55]} intensity={1.4} distance={5} decay={2} color="#fff0d2" />
         <pointLight position={[0.5, ROOM.height - 0.2, 0.3]} intensity={0.9} distance={6} decay={2} color="#ffe9c7" />
 
-        <RoomShell turf={!added.areaRug} shelf={shelf} />
+        <RoomShell turf={!added.areaRug} shelf={shelf} colors={colors} />
         {snap && <SnapGrid />}
         {(showZones || dragging) && <ZonesOverlay reachable={analysis.reachable} />}
 
@@ -465,6 +494,7 @@ export function RoomEditor() {
             selected={selected === item.id}
             showDims={showDims}
             accentTextiles={added.accentTextiles}
+            colors={colors}
             onSelect={setSelected}
             onMove={move}
             onDragChange={setDragging}
@@ -499,6 +529,9 @@ export function RoomEditor() {
         suggestions={suggestions}
         added={added}
         onToggleAddition={toggleAddition}
+        colors={colors}
+        onColorChange={(target, hex) => setColors((prev) => ({ ...prev, [target]: hex }))}
+        onResetColors={() => setColors(DEFAULT_COLORS)}
         onOptimize={optimize}
         optimizing={optimizing}
         lastMoved={lastMoved}

@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useRef, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
 import type { ShelfSpot } from "./designEngine";
+import type { RoomColors } from "./roomColors";
 import { COLORS, ROOM } from "./roomData";
 import {
   blindsTexture,
@@ -22,6 +23,9 @@ const H = ROOM.height;
 
 const tmp = new THREE.Vector3();
 
+// Walls and curtains follow the color picker; every wall reads the same paint.
+const Paint = createContext<Pick<RoomColors, "walls" | "curtains">>({ walls: COLORS.wall, curtains: COLORS.curtain });
+
 /**
  * A wall whose local +z faces into the room. Children are placed in wall space:
  * x along the wall, y up from the floor, z out from the wall surface.
@@ -38,6 +42,7 @@ function Wall({
   width: number;
   children?: ReactNode;
 }) {
+  const { walls } = useContext(Paint);
   const ref = useRef<THREE.Group>(null);
   const normal = useMemo(() => new THREE.Vector3(Math.sin(rotationY), 0, Math.cos(rotationY)), [rotationY]);
   const origin = useMemo(() => new THREE.Vector3(...position), [position]);
@@ -51,7 +56,7 @@ function Wall({
     <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
       <mesh position={[0, H / 2, 0]} receiveShadow>
         <planeGeometry args={[width, H]} />
-        <meshStandardMaterial color={COLORS.wall} roughness={0.95} />
+        <meshStandardMaterial color={walls} roughness={0.95} />
       </mesh>
       {/* Baseboard */}
       <mesh position={[0, 0.045, 0.006]} receiveShadow>
@@ -168,6 +173,7 @@ function NorthWall({ shelf }: { shelf: ShelfSpot | null }) {
   const pennant = useMemo(() => pennantTexture(), []);
   const poster = useMemo(() => xmenPosterTexture(), []);
   const winX = -0.05;
+  const { curtains } = useContext(Paint);
   return (
     <Wall position={[0, 0, -D / 2]} rotationY={0} width={W}>
       <mesh position={[winX, 1.5, 0.004]}>
@@ -191,7 +197,7 @@ function NorthWall({ shelf }: { shelf: ShelfSpot | null }) {
           {Array.from({ length: 6 }, (_, k) => (
             <mesh key={k} position={[(k - 2.5) * 0.085, 0, Math.sin(k * 1.7 + i) * 0.015]} castShadow receiveShadow>
               <cylinderGeometry args={[0.05, 0.055, 1.94, 10, 1, true]} />
-              <meshStandardMaterial color={COLORS.curtain} roughness={0.95} side={THREE.DoubleSide} />
+              <meshStandardMaterial color={curtains} roughness={0.95} side={THREE.DoubleSide} />
             </mesh>
           ))}
         </group>
@@ -323,15 +329,16 @@ function WestWall({ shelf }: { shelf: ShelfSpot | null }) {
   );
 }
 
-export function RoomShell({ turf, shelf }: { turf: boolean; shelf: ShelfSpot | null }) {
+export function RoomShell({ turf, shelf, colors }: { turf: boolean; shelf: ShelfSpot | null; colors: RoomColors }) {
+  const paint = useMemo(() => ({ walls: colors.walls, curtains: colors.curtains }), [colors.walls, colors.curtains]);
   return (
-    <group>
+    <Paint.Provider value={paint}>
       <Floor turf={turf} />
       <Ceiling />
       <NorthWall shelf={shelf} />
       <EastWall shelf={shelf} />
       <SouthWall shelf={shelf} />
       <WestWall shelf={shelf} />
-    </group>
+    </Paint.Provider>
   );
 }

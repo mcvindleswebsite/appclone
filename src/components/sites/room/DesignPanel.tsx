@@ -1,10 +1,32 @@
 "use client";
 
-import { Check, ChevronDown, CircleCheck, Eye, EyeOff, Plus, Sparkles, TriangleAlert, Undo2, WandSparkles } from "lucide-react";
+import { useState } from "react";
+import {
+  Check,
+  ChevronDown,
+  CircleCheck,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  TriangleAlert,
+  Undo2,
+  WandSparkles,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 import type { Analysis, ItemReport, Suggestion, SuggestionId } from "./designEngine";
+import {
+  COLOR_TARGETS,
+  DEFAULT_COLORS,
+  EARTH_SWATCHES,
+  amazonSearchUrl,
+  type ColorTarget,
+  type RoomColors,
+} from "./roomColors";
 import { COLORS } from "./roomData";
 
 const ACCENT = "#00DD94";
@@ -78,6 +100,88 @@ function ReportLines({ report }: { report: ItemReport }) {
   );
 }
 
+function ColorPicker({
+  colors,
+  onChange,
+  onReset,
+}: {
+  colors: RoomColors;
+  onChange: (target: ColorTarget, hex: string) => void;
+  onReset: () => void;
+}) {
+  const [target, setTarget] = useState<ColorTarget>("walls");
+  const current = colors[target];
+  const hint = COLOR_TARGETS.find((t) => t.id === target)?.hint;
+  const changed = COLOR_TARGETS.some((t) => colors[t.id] !== DEFAULT_COLORS[t.id]);
+  const swatches = [{ name: "Original", hex: DEFAULT_COLORS[target] }, ...EARTH_SWATCHES];
+
+  return (
+    <div className="mt-5">
+      <div className="mb-2 flex items-center justify-between">
+        <SectionTitle>Earth-tone colors</SectionTitle>
+        {changed && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="-mt-2 flex items-center gap-1 text-[11px] text-[#F5F7F4]/55 hover:text-[#F5F7F4]"
+          >
+            <RotateCcw className="size-3" /> Reset
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {COLOR_TARGETS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTarget(t.id)}
+            aria-pressed={target === t.id}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition",
+              target === t.id
+                ? "border-[#00DD94]/60 bg-[#00DD94]/10 text-[#F5F7F4]"
+                : "border-[#1E2638] text-[#F5F7F4]/60 hover:text-[#F5F7F4]",
+            )}
+          >
+            <span className="size-2.5 rounded-full ring-1 ring-white/20" style={{ background: colors[t.id] }} />
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2.5 grid grid-cols-7 gap-1.5">
+        {swatches.map((s) => {
+          const on = current.toLowerCase() === s.hex.toLowerCase();
+          return (
+            <button
+              key={s.name}
+              type="button"
+              title={s.name}
+              aria-label={`${s.name} ${COLOR_TARGETS.find((t) => t.id === target)?.label.toLowerCase()}`}
+              aria-pressed={on}
+              onClick={() => onChange(target, s.hex)}
+              className={cn(
+                "relative aspect-square rounded-lg ring-1 ring-white/15 transition hover:scale-105",
+                on && "ring-2 ring-[#00DD94] ring-offset-2 ring-offset-[#050D0A]",
+              )}
+              style={{ background: s.hex }}
+            >
+              {s.name === "Original" && (
+                <span className="absolute inset-x-0 bottom-0.5 text-center text-[7px] font-semibold tracking-wide text-white uppercase mix-blend-difference">
+                  orig
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-[11px] text-[#F5F7F4]/50">
+        {swatches.find((s) => s.hex.toLowerCase() === current.toLowerCase())?.name ?? "Custom"}
+        {hint && <span className="text-[#F5F7F4]/35"> · {hint}</span>}
+      </p>
+    </div>
+  );
+}
+
 export function DesignPanel({
   open,
   onOpenChange,
@@ -86,6 +190,9 @@ export function DesignPanel({
   suggestions,
   added,
   onToggleAddition,
+  colors,
+  onColorChange,
+  onResetColors,
   onOptimize,
   optimizing,
   lastMoved,
@@ -100,6 +207,9 @@ export function DesignPanel({
   suggestions: Suggestion[];
   added: Record<SuggestionId, boolean>;
   onToggleAddition: (id: SuggestionId) => void;
+  colors: RoomColors;
+  onColorChange: (target: ColorTarget, hex: string) => void;
+  onResetColors: () => void;
   onOptimize: () => void;
   optimizing: boolean;
   lastMoved: number | null;
@@ -208,7 +318,7 @@ export function DesignPanel({
             <div className="mt-5">
               <SectionTitle>60 · 30 · 10 palette</SectionTitle>
               <div className="flex h-2.5 overflow-hidden rounded-full">
-                <div style={{ width: `${palette.base}%`, background: COLORS.wall }} />
+                <div style={{ width: `${palette.base}%`, background: colors.walls }} />
                 <div style={{ width: `${palette.secondary}%`, background: COLORS.cherryWood }} />
                 <div style={{ width: `${palette.accent}%`, background: COLORS.bocaGold }} />
               </div>
@@ -231,8 +341,10 @@ export function DesignPanel({
               </div>
             </div>
 
+            <ColorPicker colors={colors} onChange={onColorChange} onReset={onResetColors} />
+
             <div className="mt-5">
-              <SectionTitle>Suggested additions</SectionTitle>
+              <SectionTitle>AI design suggestions</SectionTitle>
               <ul className="flex flex-col gap-2">
                 {suggestions.map((s) => {
                   const on = added[s.id];
@@ -250,6 +362,14 @@ export function DesignPanel({
                           <p className="text-[13px] font-semibold leading-tight">{s.title}</p>
                           <p className="mt-0.5 font-mono text-[10px] text-[#F5F7F4]/45">{s.spec}</p>
                           <p className="mt-1 text-[11px] leading-snug text-[#F5F7F4]/65">{s.reason}</p>
+                          <a
+                            href={amazonSearchUrl(s.title)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-2 inline-flex items-center gap-1 rounded-full border border-[#1E2638] bg-white/[0.03] px-2.5 py-1 text-[11px] font-medium text-[#00DD94] transition hover:border-[#00DD94]/50 hover:bg-[#00DD94]/10"
+                          >
+                            View on Amazon <ExternalLink className="size-3" />
+                          </a>
                         </div>
                         <button
                           type="button"

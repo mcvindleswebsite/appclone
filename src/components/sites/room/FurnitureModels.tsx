@@ -1,8 +1,10 @@
 "use client";
 
+import { useMemo } from "react";
 import { RoundedBox } from "@react-three/drei";
 import * as THREE from "three";
 
+import type { RoomColors } from "./roomColors";
 import { COLORS, type FurnitureItem } from "./roomData";
 
 type Vec3 = [number, number, number];
@@ -53,16 +55,16 @@ function Soft({
   );
 }
 
-function Bed({ accentTextiles }: { accentTextiles: boolean }) {
+function Bed({ accentTextiles, bedding }: { accentTextiles: boolean; bedding: string }) {
   // 1.91 × 1.37 full bed, headboard end at local −x (against the west wall).
   return (
     <group>
       <Block args={[1.91, 0.2, 1.37]} position={[0, 0.1, 0]} color="#2a2a2d" />
       <Soft args={[1.88, 0.24, 1.35]} position={[0, 0.32, 0]} color={COLORS.sheets} radius={0.06} />
       {/* Beige quilted comforter, draped over the side and foot */}
-      <Soft args={[1.4, 0.07, 1.43]} position={[0.25, 0.47, 0.01]} color={COLORS.comforter} />
-      <Block args={[1.4, 0.36, 0.02]} position={[0.25, 0.3, 0.725]} color={COLORS.comforter} roughness={1} />
-      <Block args={[0.02, 0.36, 1.4]} position={[0.95, 0.3, 0.01]} color={COLORS.comforter} roughness={1} />
+      <Soft args={[1.4, 0.07, 1.43]} position={[0.25, 0.47, 0.01]} color={bedding} />
+      <Block args={[1.4, 0.36, 0.02]} position={[0.25, 0.3, 0.725]} color={bedding} roughness={1} />
+      <Block args={[0.02, 0.36, 1.4]} position={[0.95, 0.3, 0.01]} color={bedding} roughness={1} />
       {/* Pillows */}
       <Soft args={[0.42, 0.15, 0.62]} position={[-0.7, 0.53, -0.33]} color="#b7c4b9" radius={0.06} />
       <Soft args={[0.4, 0.13, 0.6]} position={[-0.72, 0.52, 0.32]} color="#e5dccb" radius={0.06} />
@@ -79,21 +81,21 @@ function Bed({ accentTextiles }: { accentTextiles: boolean }) {
   );
 }
 
-function Nightstand() {
+function Nightstand({ wood }: { wood: string }) {
   // Low dark-wood console table with a lower shelf.
   const top = 0.6;
   return (
     <group>
-      <Block args={[1.0, 0.04, 0.35]} position={[0, top - 0.02, 0]} color={COLORS.darkWood} roughness={0.6} />
+      <Block args={[1.0, 0.04, 0.35]} position={[0, top - 0.02, 0]} color={wood} roughness={0.6} />
       {[
         [-0.47, -0.15],
         [0.47, -0.15],
         [-0.47, 0.15],
         [0.47, 0.15],
       ].map(([x, z]) => (
-        <Block key={`${x}-${z}`} args={[0.04, top - 0.04, 0.04]} position={[x, (top - 0.04) / 2, z]} color={COLORS.darkWood} />
+        <Block key={`${x}-${z}`} args={[0.04, top - 0.04, 0.04]} position={[x, (top - 0.04) / 2, z]} color={wood} />
       ))}
-      <Block args={[0.94, 0.025, 0.3]} position={[0, 0.16, 0]} color={COLORS.darkWood} />
+      <Block args={[0.94, 0.025, 0.3]} position={[0, 0.16, 0]} color={wood} />
       {/* Navy table lamp */}
       <mesh position={[-0.32, top + 0.015, 0]} castShadow>
         <cylinderGeometry args={[0.06, 0.07, 0.03, 20]} />
@@ -257,16 +259,18 @@ function ElectricGuitar() {
   );
 }
 
-function AreaRug({ w, d }: { w: number; d: number }) {
-  // Suggested addition: low-pile sand wool rug with a tonal border.
+function AreaRug({ w, d, color }: { w: number; d: number; color: string }) {
+  // Suggested addition: low-pile wool rug with a tonal border. The field is the border
+  // lifted toward white, so any picked color keeps the border.
+  const field = useMemo(() => `#${new THREE.Color(color).lerp(new THREE.Color("#ffffff"), 0.14).getHexString()}`, [color]);
   return (
     <group>
       <RoundedBox args={[w, 0.012, d]} radius={0.005} smoothness={2} position={[0, 0.008, 0]} receiveShadow>
-        <meshStandardMaterial color={COLORS.sand} roughness={1} />
+        <meshStandardMaterial color={color} roughness={1} />
       </RoundedBox>
       <mesh position={[0, 0.0145, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[w - 0.16, d - 0.16]} />
-        <meshStandardMaterial color="#d6c6a3" roughness={1} />
+        <meshStandardMaterial color={field} roughness={1} />
       </mesh>
     </group>
   );
@@ -297,12 +301,20 @@ function Uplight() {
   );
 }
 
-export function FurnitureModel({ item, accentTextiles }: { item: FurnitureItem; accentTextiles: boolean }) {
+export function FurnitureModel({
+  item,
+  accentTextiles,
+  colors,
+}: {
+  item: FurnitureItem;
+  accentTextiles: boolean;
+  colors: RoomColors;
+}) {
   switch (item.kind) {
     case "bed":
-      return <Bed accentTextiles={accentTextiles} />;
+      return <Bed accentTextiles={accentTextiles} bedding={colors.bedding} />;
     case "nightstand":
-      return <Nightstand />;
+      return <Nightstand wood={colors.accent} />;
     case "desk":
       return <Desk />;
     case "gamingChair":
@@ -316,7 +328,7 @@ export function FurnitureModel({ item, accentTextiles }: { item: FurnitureItem; 
     case "electricGuitar":
       return <ElectricGuitar />;
     case "areaRug":
-      return <AreaRug w={item.size.w} d={item.size.d} />;
+      return <AreaRug w={item.size.w} d={item.size.d} color={colors.rug} />;
     case "uplight":
       return <Uplight />;
   }
