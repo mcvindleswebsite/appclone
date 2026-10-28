@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } 
 import { Canvas, useFrame, useThree, type RootState, type ThreeEvent } from "@react-three/fiber";
 import { Edges, Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { Grid3x3, Orbit, RotateCcw, RotateCw, Ruler, ScanEye } from "lucide-react";
+import { DoorClosed, DoorOpen, Grid3x3, Orbit, RotateCcw, RotateCw, Ruler, ScanEye } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -326,6 +326,7 @@ export function RoomEditor() {
   const [selected, setSelected] = useState<string | null>(null);
   const [snap, setSnap] = useState(true);
   const [showDims, setShowDims] = useState(false);
+  const [closetOpen, setClosetOpen] = useState(false);
   const [view, setView] = useState<View>("orbit");
   const [panelOpen, setPanelOpen] = useState(() => window.innerWidth >= 640);
   const [showZones, setShowZones] = useState(false);
@@ -481,7 +482,7 @@ export function RoomEditor() {
         <pointLight position={[-0.05, 1.6, -1.55]} intensity={1.4} distance={5} decay={2} color="#fff0d2" />
         <pointLight position={[0.5, ROOM.height - 0.2, 0.3]} intensity={0.9} distance={6} decay={2} color="#ffe9c7" />
 
-        <RoomShell turf={!added.areaRug} shelf={shelf} colors={colors} />
+        <RoomShell turf={!added.areaRug} shelf={shelf} colors={colors} closetOpen={closetOpen} />
         {snap && <SnapGrid />}
         {(showZones || dragging) && <ZonesOverlay reachable={analysis.reachable} />}
 
@@ -566,6 +567,9 @@ export function RoomEditor() {
           </ToolButton>
           <ToolButton label="Rotate" disabled={!selected} onClick={rotateSelected}>
             <RotateCw className="size-4" />
+          </ToolButton>
+          <ToolButton label="Closet" active={closetOpen} onClick={() => setClosetOpen((o) => !o)}>
+            {closetOpen ? <DoorOpen className="size-4" /> : <DoorClosed className="size-4" />}
           </ToolButton>
           <div className="mx-1 h-5 w-px bg-white/10" />
           <ToolButton

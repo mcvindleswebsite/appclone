@@ -26,6 +26,32 @@ const tmp = new THREE.Vector3();
 // Walls and curtains follow the color picker; every wall reads the same paint.
 const Paint = createContext<Pick<RoomColors, "walls" | "curtains">>({ walls: COLORS.wall, curtains: COLORS.curtain });
 
+interface Opening {
+  /** Center along the wall, in wall space. */
+  x: number;
+  w: number;
+  h: number;
+}
+
+/** The wall face from floor to ceiling, with the opening cut out down to the floor. */
+function wallGeometry(width: number, opening?: Opening) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-width / 2, 0);
+  if (opening) {
+    const x0 = opening.x - opening.w / 2;
+    const x1 = opening.x + opening.w / 2;
+    shape.lineTo(x0, 0);
+    shape.lineTo(x0, opening.h);
+    shape.lineTo(x1, opening.h);
+    shape.lineTo(x1, 0);
+  }
+  shape.lineTo(width / 2, 0);
+  shape.lineTo(width / 2, H);
+  shape.lineTo(-width / 2, H);
+  shape.closePath();
+  return new THREE.ShapeGeometry(shape);
+}
+
 /**
  * A wall whose local +z faces into the room. Children are placed in wall space:
  * x along the wall, y up from the floor, z out from the wall surface.
@@ -35,14 +61,28 @@ function Wall({
   position,
   rotationY,
   width,
+  opening,
   children,
 }: {
   position: [number, number, number];
   rotationY: number;
   width: number;
+  /** A doorway cut through the wall, from the floor up. */
+  opening?: Opening;
   children?: ReactNode;
 }) {
   const { walls } = useContext(Paint);
+  const geometry = useMemo(() => wallGeometry(width, opening), [width, opening]);
+  // The baseboard runs either side of an opening.
+  const baseboards = useMemo<[number, number][]>(() => {
+    if (!opening) return [[0, width]];
+    const x0 = opening.x - opening.w / 2;
+    const x1 = opening.x + opening.w / 2;
+    return [
+      [(-width / 2 + x0) / 2, x0 + width / 2],
+      [(x1 + width / 2) / 2, width / 2 - x1],
+    ];
+  }, [width, opening]);
   const ref = useRef<THREE.Group>(null);
   const normal = useMemo(() => new THREE.Vector3(Math.sin(rotationY), 0, Math.cos(rotationY)), [rotationY]);
   const origin = useMemo(() => new THREE.Vector3(...position), [position]);
@@ -54,15 +94,16 @@ function Wall({
 
   return (
     <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
-      <mesh position={[0, H / 2, 0]} receiveShadow>
-        <planeGeometry args={[width, H]} />
+      <mesh geometry={geometry} receiveShadow>
         <meshStandardMaterial color={walls} roughness={0.95} />
       </mesh>
       {/* Baseboard */}
-      <mesh position={[0, 0.045, 0.006]} receiveShadow>
-        <boxGeometry args={[width, 0.09, 0.012]} />
-        <meshStandardMaterial color={COLORS.trim} roughness={0.6} />
-      </mesh>
+      {baseboards.map(([x, w]) => (
+        <mesh key={x} position={[x, 0.045, 0.006]} receiveShadow>
+          <boxGeometry args={[w, 0.09, 0.012]} />
+          <meshStandardMaterial color={COLORS.trim} roughness={0.6} />
+        </mesh>
+      ))}
       {children}
     </group>
   );
@@ -213,23 +254,151 @@ function NorthWall({ shelf }: { shelf: ShelfSpot | null }) {
   );
 }
 
-function EastWall({ shelf }: { shelf: ShelfSpot | null }) {
-  // Sliding closet with chalkboard-painted doors (IMG_7444).
-  const board = useMemo(() => chalkboardTexture(), []);
+// The closet doorway on the east wall, and how deep the closet runs behind it.
+const CLOSET: Opening = { x: -0.25, w: 1.8, h: 2.05 };
+const CLOSET_DEPTH = 0.6;
+
+// Hanging clothes, left to right: [width along the rod, length, color].
+const CLOTHES: [number, number, string][] = [
+  [0.05, 0.95, "#2c3a5c"],
+  [0.05, 0.9, "#1f3a86"],
+  [0.04, 0.7, "#f2b630"],
+  [0.05, 0.72, "#e8e4da"],
+  [0.04, 0.68, "#7a2e2a"],
+  [0.06, 1.05, "#3f4a2c"],
+  [0.05, 0.75, "#9aa3ad"],
+  [0.04, 0.7, "#1b1b1d"],
+  [0.05, 0.72, "#c9b48a"],
+  [0.06, 1.0, "#4a3a2e"],
+  [0.04, 0.7, "#6b8fb3"],
+];
+
+// Each piece's center along the rod, packed from the left end of the closet with a small gap.
+const CLOTHES_X = CLOTHES.reduce<number[]>((xs, [cw], i) => {
+  const prev = i ? xs[i - 1] + CLOTHES[i - 1][0] / 2 + 0.055 : CLOSET.x - CLOSET.w / 2 + 0.12;
+  return [...xs, prev + cw / 2];
+}, []);
+
+/** The closet behind the chalkboard doors, built in east-wall space (z < 0 is behind the wall). */
+function ClosetInterior() {
+  const { x, w, h } = CLOSET;
+  const back = -CLOSET_DEPTH;
+  const rodY = 1.68;
+  const rodZ = back / 2;
   return (
-    <Wall position={[W / 2, 0, 0]} rotationY={-Math.PI / 2} width={D}>
-      <mesh position={[-0.25, 1.06, 0.01]}>
-        <planeGeometry args={[1.88, 2.12]} />
-        <meshStandardMaterial color={COLORS.trim} />
+    <group>
+      {/* Back, sides, ceiling and carpeted floor */}
+      <mesh position={[x, h / 2, back]} receiveShadow>
+        <planeGeometry args={[w, h]} />
+        <meshStandardMaterial color="#ddd2b4" roughness={0.95} />
       </mesh>
-      <mesh position={[-0.25, 1.03, 0.025]} receiveShadow>
-        <boxGeometry args={[1.8, 2.05, 0.02]} />
-        <meshStandardMaterial map={board} roughness={0.9} />
+      {[-1, 1].map((s) => (
+        <mesh key={s} position={[x + (s * w) / 2, h / 2, back / 2]} rotation={[0, (-s * Math.PI) / 2, 0]} receiveShadow>
+          <planeGeometry args={[CLOSET_DEPTH, h]} />
+          <meshStandardMaterial color="#d6caab" roughness={0.95} />
+        </mesh>
+      ))}
+      <mesh position={[x, h, back / 2]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[w, CLOSET_DEPTH]} />
+        <meshStandardMaterial color="#e4ddc9" roughness={0.95} />
       </mesh>
-      <mesh position={[-0.25, 1.03, 0.037]}>
-        <boxGeometry args={[0.02, 2.05, 0.004]} />
-        <meshStandardMaterial color="#cfcac0" metalness={0.4} />
+      <mesh position={[x, 0.004, back / 2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[w, CLOSET_DEPTH]} />
+        <meshStandardMaterial color={COLORS.carpet} roughness={1} />
       </mesh>
+
+      {/* Shelf above the rod, with storage bins and a cap */}
+      <mesh position={[x, 1.86, back + 0.17]} castShadow receiveShadow>
+        <boxGeometry args={[w - 0.02, 0.025, 0.34]} />
+        <meshStandardMaterial color={COLORS.trim} roughness={0.6} />
+      </mesh>
+      {[
+        [-0.6, 0.38, 0.16, "#8b7355"],
+        [-0.18, 0.34, 0.14, "#4f5a66"],
+        [0.4, 0.3, 0.12, "#a89574"],
+      ].map(([dx, bw, bh, color]) => (
+        <mesh key={String(dx)} position={[x + Number(dx), 1.873 + Number(bh) / 2, back + 0.17]} castShadow>
+          <boxGeometry args={[Number(bw), Number(bh), 0.28]} />
+          <meshStandardMaterial color={String(color)} roughness={0.85} />
+        </mesh>
+      ))}
+      <mesh position={[x + 0.72, 1.91, back + 0.2]} castShadow>
+        <sphereGeometry args={[0.07, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial color={COLORS.bocaNavy} roughness={0.8} />
+      </mesh>
+
+      {/* Rod and hanging clothes */}
+      <mesh position={[x, rodY, rodZ]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.012, 0.012, w - 0.02, 10]} />
+        <meshStandardMaterial color="#b8b8b8" metalness={0.8} roughness={0.3} />
+      </mesh>
+      {CLOTHES.map(([cw, len, color], i) => (
+        <group key={i} position={[CLOTHES_X[i], rodY, rodZ]}>
+          <mesh position={[0, -0.03, 0]}>
+            <boxGeometry args={[0.008, 0.05, 0.36]} />
+            <meshStandardMaterial color="#6b5a45" />
+          </mesh>
+          <mesh position={[0, -0.06 - len / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[cw, len, 0.44]} />
+            <meshStandardMaterial color={color} roughness={0.95} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Shoes on the floor */}
+      {[-0.7, -0.5, 0.3, 0.5].map((dx, i) => (
+        <group key={dx} position={[x + dx, 0, back + 0.2]}>
+          {[-0.05, 0.05].map((o) => (
+            <mesh key={o} position={[o, 0.04, 0]} castShadow>
+              <boxGeometry args={[0.09, 0.08, 0.28]} />
+              <meshStandardMaterial color={["#f0f0f0", "#1b1b1d", "#7a5a3a", "#c22c2c"][i]} roughness={0.7} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+
+      <pointLight position={[x, h - 0.15, back / 2]} intensity={0.5} distance={2.2} decay={2} color="#ffe9c7" />
+    </group>
+  );
+}
+
+function EastWall({ shelf, closetOpen }: { shelf: ShelfSpot | null; closetOpen: boolean }) {
+  // Sliding closet with chalkboard-painted doors (IMG_7444); the doors come off to show inside.
+  const board = useMemo(() => chalkboardTexture(), []);
+  const { x, w, h } = CLOSET;
+  return (
+    <Wall position={[W / 2, 0, 0]} rotationY={-Math.PI / 2} width={D} opening={closetOpen ? CLOSET : undefined}>
+      {closetOpen ? (
+        <>
+          {/* Door casing around the open doorway */}
+          {[-1, 1].map((s) => (
+            <mesh key={s} position={[x + s * (w / 2 + 0.02), h / 2 + 0.035, 0.01]}>
+              <boxGeometry args={[0.04, h + 0.07, 0.02]} />
+              <meshStandardMaterial color={COLORS.trim} />
+            </mesh>
+          ))}
+          <mesh position={[x, h + 0.035, 0.01]}>
+            <boxGeometry args={[w + 0.08, 0.07, 0.02]} />
+            <meshStandardMaterial color={COLORS.trim} />
+          </mesh>
+          <ClosetInterior />
+        </>
+      ) : (
+        <>
+          <mesh position={[x, 1.06, 0.01]}>
+            <planeGeometry args={[1.88, 2.12]} />
+            <meshStandardMaterial color={COLORS.trim} />
+          </mesh>
+          <mesh position={[x, 1.03, 0.025]} receiveShadow>
+            <boxGeometry args={[w, h, 0.02]} />
+            <meshStandardMaterial map={board} roughness={0.9} />
+          </mesh>
+          <mesh position={[x, 1.03, 0.037]}>
+            <boxGeometry args={[0.02, h, 0.004]} />
+            <meshStandardMaterial color="#cfcac0" metalness={0.4} />
+          </mesh>
+        </>
+      )}
       {shelf?.wall === "east" && (
         <group position={[shelf.localX, 0, 0]}>
           <FloatingShelf length={shelf.length} />
@@ -329,14 +498,24 @@ function WestWall({ shelf }: { shelf: ShelfSpot | null }) {
   );
 }
 
-export function RoomShell({ turf, shelf, colors }: { turf: boolean; shelf: ShelfSpot | null; colors: RoomColors }) {
+export function RoomShell({
+  turf,
+  shelf,
+  colors,
+  closetOpen,
+}: {
+  turf: boolean;
+  shelf: ShelfSpot | null;
+  colors: RoomColors;
+  closetOpen: boolean;
+}) {
   const paint = useMemo(() => ({ walls: colors.walls, curtains: colors.curtains }), [colors.walls, colors.curtains]);
   return (
     <Paint.Provider value={paint}>
       <Floor turf={turf} />
       <Ceiling />
       <NorthWall shelf={shelf} />
-      <EastWall shelf={shelf} />
+      <EastWall shelf={shelf} closetOpen={closetOpen} />
       <SouthWall shelf={shelf} />
       <WestWall shelf={shelf} />
     </Paint.Provider>
