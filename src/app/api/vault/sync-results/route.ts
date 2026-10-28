@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { checkAccess } from "@/lib/bet/access";
 import { settleRecords } from "@/lib/bet/settle";
 import { readVault, redis, VAULT_KEY } from "@/lib/bet/store";
+import { settleTracked } from "@/lib/bet/track";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -23,7 +24,11 @@ const sync = async () => {
     const records = await readVault();
     if (!records) return Response.json({ error: "Store not configured" }, { status: 503 });
 
-    const { checked, updated, settled, failed } = await settleRecords(records);
+    const [{ checked, updated, settled, failed }] = await Promise.all([
+      settleRecords(records),
+      // The scanner's own track record settles on the same schedule.
+      settleTracked().catch(() => null),
+    ]);
     if (updated.length) {
       const reply = await redis(["HSET", VAULT_KEY, ...updated.flatMap((r) => [r.id, JSON.stringify(r)])]);
       if (!reply) return Response.json({ error: "Store not configured" }, { status: 503 });

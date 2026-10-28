@@ -97,6 +97,56 @@ export interface ReasoningStat {
   source: string;
 }
 
+/** A sharp-book price for a Kalshi leg, and the edge Kalshi's ask leaves after its fee. */
+export interface SharpLine {
+  /** De-vigged probability (0-1). */
+  fair: number;
+  /** "Pinnacle" or "N-book consensus". */
+  source: string;
+  /** fair − ask − Kalshi taker fee, as a probability (0.02 = 2 pts). */
+  edge: number;
+}
+
+/** A Kalshi market priced below the sharp books right now (no AI). */
+export interface PriceGap {
+  leg: BetLeg;
+  league: string;
+  kickoffTime: string;
+  ask: number;
+  sharp: SharpLine;
+}
+
+/** A Top Pick logged silently so the scanner's own record can be measured. */
+export interface TrackedPick {
+  ticker: string;
+  matchup: string;
+  pick: string;
+  league: string;
+  kickoffTime: string;
+  /** Kalshi ask when first recommended, in cents. */
+  entry: number;
+  /** Probability the pick was recommended at (sharp fair or AI). */
+  probability: number;
+  basis: "sharp" | "ai";
+  deep: boolean;
+  loggedAt: number;
+  result?: LegResult;
+  /** Kalshi's fair YES price at kickoff, in cents; null when it couldn't be read. */
+  close?: number | null;
+}
+
+export interface TrackSummary {
+  picks: number;
+  settled: number;
+  wins: number;
+  /** Units per pick at one unit staked at the entry price, after fees. */
+  roi: number | null;
+  /** Mean close ÷ entry − 1. */
+  clv: number | null;
+  clvN: number;
+  beatClose: number | null;
+}
+
 /** A structured summary of the Bet Vault, computed in code and sent with each research call. */
 export interface VaultProfile {
   picks: number;
@@ -264,6 +314,20 @@ export interface RecommendedLeg {
   confidenceRating: number;
   /** How the bettor's Bet Vault record bears on this pick; empty when it doesn't. */
   historyFlag: string;
+  /**
+   * What the probability rests on: "sharp" = the sharp books' de-vigged price (the AI only
+   * vetoes), "ai" = the AI's own estimate where no book line was found.
+   */
+  basis: "sharp" | "ai";
+  sharp?: SharpLine;
+  /** The AI's own probability, shown alongside a sharp-anchored one. */
+  aiProbability: number;
+  /** Re-researched on the deep model (with API-Football data when available). */
+  deep: boolean;
+  /** API-Football supplied verified data for this pick. */
+  footballData: boolean;
+  /** Full-Kelly fraction of bankroll at this price and probability; the client scales it. */
+  kelly: number;
   /** Model's probability the leg wins. */
   modelProbability: number;
   /** What the Kalshi price implies. */
@@ -289,7 +353,21 @@ export interface SoccerRecommendation {
     ev: number;
   } | null;
   /** `skipped`: fixtures in scope that ran out of research time (least-traded first). */
-  scanned: { fixtures: number; researched: number; qualified: number; skipped?: number; insufficient?: number };
+  scanned: {
+    fixtures: number;
+    researched: number;
+    qualified: number;
+    skipped?: number;
+    insufficient?: number;
+    /** Fixtures with a sharp-book line. */
+    sharpLines?: number;
+    /** Fixtures dropped before research because Kalshi wasn't cheaper than the sharp price. */
+    noPriceEdge?: number;
+    /** Finalists re-researched on the deep model. */
+    deep?: number;
+  };
+  /** Which data sources were available for this scan. */
+  sources?: { sharp: boolean; football: boolean };
   /** Whether the bettor's Bet Vault history was applied, and how many settled picks it held. */
   history?: { applied: boolean; settled: number };
   generatedAt: string;

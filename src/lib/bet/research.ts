@@ -1,15 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-import { BET_MODEL } from "@/lib/bet/model";
+import { BET_MODEL, DEEP_MODEL } from "@/lib/bet/model";
 import type { BetLeg, LegAnalysis } from "@/types/bet";
 
 /**
  * Per-leg AI research (web search on Claude Haiku): trend and line hit rate, matchup and
  * schedule, injuries, and opponent-tier/trap-game profiling. Shared by the slip evaluator
- * and the soccer scanner.
+ * and the soccer scanner, whose finalists get a deep pass on DEEP_MODEL.
  */
-const MODEL = BET_MODEL;
 const MAX_TURNS = 3;
+/** The deep pass: more searches and more thinking, on the finalists only. */
+const DEEP = { webSearches: 5, effort: "medium" as const };
 
 const client = () => new Anthropic({ timeout: 90_000, maxRetries: 1 });
 
@@ -44,6 +45,8 @@ Grounding rules — these override everything above:
 - reasoningStats lists the concrete metrics your rating rests on — at least two from your research, such as the head-to-head record, recent form, league position, goals for/against, key player status, or what other books price the leg at. Each has the metric, its value, and its source (publication or site, with the date when shown). Don't list the Kalshi price; the app adds the line value itself.
 - If you can't find at least two current, verifiable stats about this fixture — or what you found is stale, contradictory, or about a different match — set dataSufficient to false, rating NEUTRAL, hitConfidence 1-3, probability equal to the market price (or 0.5 with no price), and say in reason what was missing. An honest "insufficient data" is always better than a confident guess.
 - hitConfidence is strict: 8-10 only when several independent, recent sources agree; 4-7 for solid but partial evidence; 1-3 for thin evidence.
+
+Verified match data from a football data provider may be given in <verified_data>. Treat it as fact: prefer it over search snippets when they conflict, and cite its numbers with that provider as the source (they count toward reasoningStats). It doesn't replace research — still check team news, motivation, and anything it doesn't cover.
 
 The bettor's Bet Vault record may be given in <bettor_history>. It describes the bettor's past results, not the teams, so it is never evidence about this fixture and must not change your probability. Use it only to:
 - lower hitConfidence for a market type, league, or price range where the bettor has a proven losing record, and raise it at most one point where they have a proven winning one, when your research independently supports the leg;
@@ -182,20 +185,29 @@ export const runTool = async <T,>(
   system: string,
   tool: Anthropic.Beta.BetaTool,
   prompt: string,
-  options: { webSearches: number; effort: "low" | "medium"; sources?: string[] }
+  options: { webSearches: number; effort: "low" | "medium"; sources?: string[]; deep?: boolean }
 ): Promise<T | null> => {
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: prompt }];
   const tools: Anthropic.Beta.BetaToolUnion[] = [tool];
-  if (options.webSearches > 0) tools.unshift({ type: "web_search_20250305", name: "web_search", max_uses: options.webSearches });
+  if (options.webSearches > 0) {
+    // Sonnet takes the dynamic-filtering search; Haiku the basic one.
+    tools.unshift(
+      options.deep
+        ? { type: "web_search_20260209", name: "web_search", max_uses: options.webSearches }
+        : { type: "web_search_20250305", name: "web_search", max_uses: options.webSearches }
+    );
+  }
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const response = await client().beta.messages.create({
-      model: MODEL,
+      model: options.deep ? DEEP_MODEL : BET_MODEL,
       max_tokens: 16000,
       output_config: { effort: options.effort },
       system,
       tools,
       messages,
+      // Sonnet only: a policy decline re-runs on a fallback model inside the same call.
+      ...(options.deep ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
     });
     if (response.stop_reason === "refusal") return null;
 
@@ -243,23 +255,30 @@ const THIN_CONFIDENCE = 3;
 /**
  * Researches one leg in a fresh, stateless call. `history` is the bettor's Bet Vault profile
  * (from describeVaultProfile), passed as structured context on every call rather than kept in
- * any conversation.
+ * any conversation. `deep` runs the finalist pass on DEEP_MODEL; `facts` is verified match
+ * data (API-Football) that grounds the leg even if search turns up little.
  */
-export const researchLeg = async (leg: BetLeg, history?: string): Promise<LegAnalysis> => {
+export const researchLeg = async (
+  leg: BetLeg,
+  history?: string,
+  options: { deep?: boolean; facts?: string } = {}
+): Promise<LegAnalysis> => {
   try {
     const sources: string[] = [];
     const prompt = [
       describeLeg(leg),
       `Today's date: ${new Date().toDateString()}`,
+      options.facts ? `\n<verified_data source="API-Football">\n${options.facts}\n</verified_data>` : null,
       history ? `\n<bettor_history>\n${history}\n</bettor_history>` : null,
     ]
       .filter(Boolean)
       .join("\n");
     const raw = await runTool<Omit<LegAnalysis, "researched">>(LEG_SYSTEM, SUBMIT_LEG, prompt, {
-      webSearches: 3,
-      effort: "low",
+      ...(options.deep ? DEEP : { webSearches: 3, effort: "low" as const }),
+      deep: options.deep,
       sources,
     });
+    if (options.facts) sources.push("api-football");
     if (!raw) return placeholder(leg);
     const games = int(raw.last10.games, 0, 20);
     const outOf = int(raw.matchup.outOf, 1, 64);

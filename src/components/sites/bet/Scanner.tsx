@@ -3,6 +3,7 @@
 import { ArrowRightLeft, Hourglass, Loader2, Radar, RefreshCw, Vault } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { adviseStake, type BankrollSettings } from "@/lib/bet/bankroll";
 import { decimalToAmerican, formatAmerican, kalshiDecimal } from "@/lib/bet/engine";
 import { DEFAULT_WAGER, formatMoney } from "@/lib/bet/pnl";
 import {
@@ -14,8 +15,9 @@ import {
   type TimeWindow,
 } from "@/lib/bet/scan-scope";
 import { cn } from "@/lib/utils";
-import type { RecommendedLeg, SoccerRecommendation, VaultProfile } from "@/types/bet";
+import type { BetLeg, RecommendedLeg, SoccerRecommendation, VaultProfile } from "@/types/bet";
 
+import { PriceGapList, type GapState } from "./PriceGaps";
 import { T } from "./theme";
 
 const pct = (n: number, digits = 0) => `${(n * 100).toFixed(digits)}%`;
@@ -146,18 +148,36 @@ export function Scanner({
   accessKey,
   keyBroken,
   profile,
+  bankroll,
+  exposure,
+  gaps,
+  gapAlerts,
+  onGapAlerts,
+  onEvaluateLeg,
   onImport,
   onLog,
+  onLogSingles,
 }: {
   accessKey: string;
   keyBroken: boolean;
   /** Bet Vault summary sent with each scan, so picks are weighed against your own record. */
   profile: VaultProfile;
+  bankroll: BankrollSettings;
+  /** Dollars already staked today, for the daily cap. */
+  exposure: number;
+  gaps: GapState;
+  gapAlerts: boolean;
+  onGapAlerts: (on: boolean) => void;
+  /** Loads one leg (from a price-gap alert) into the evaluator. */
+  onEvaluateLeg: (leg: BetLeg) => void;
   /** Moves the recommended legs into the evaluator. */
   onImport: (rec: SoccerRecommendation) => void;
   /** Saves the recommended ticket to the vault with a stake; returns a status line. */
   onLog: (rec: SoccerRecommendation, wager: number) => string;
+  /** Saves each leg as its own single at its own stake; returns a status line. */
+  onLogSingles: (rec: SoccerRecommendation, stakes: number[]) => string;
 }) {
+  const [mode, setMode] = useState<"singles" | "parlay">("singles");
   const [rec, setRec] = useState<(SoccerRecommendation & { cached?: boolean }) | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -208,8 +228,21 @@ export function Scanner({
   const stake = Number(wager) || 0;
   const disabled = !accessKey || keyBroken || loading;
 
+  // Singles: each leg sized by fractional Kelly, the daily cap shared down the list; with no
+  // bankroll set, every single takes the flat stake below.
+  let running = exposure;
+  const singleStakes = shown.map((l) => {
+    const advice = adviseStake(bankroll, l.modelProbability, kalshiDecimal(l.leg.price ?? 50), running);
+    const amount = advice ? advice.stake : stake;
+    running += amount;
+    return { amount, advice };
+  });
+  const singlesTotal = singleStakes.reduce((s, x) => s + x.amount, 0);
+  const avgSingleEv = shown.length ? shown.reduce((s, l) => s + l.ev, 0) / shown.length : 0;
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
+      <PriceGapList state={gaps} enabled={gapAlerts} onToggle={onGapAlerts} onEvaluate={onEvaluateLeg} />
       <div className={cn(T.card, "flex flex-col gap-4 p-4 sm:p-5")}>
         <div className="flex items-start gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-(--accent-deep)">
@@ -218,9 +251,9 @@ export function Scanner({
           <div>
             <h2 className="font-kalshi-bold text-lg">AI Soccer Scanner</h2>
             <p className={cn("text-sm", T.muted)}>
-              Scans upcoming {SCAN_LEAGUES.slice(0, -1).join(", ")}, and {SCAN_LEAGUES.at(-1)} matches on Kalshi — or
-              season-long title races in the Waiting Game — researches the strongest favorites, and keeps only legs that
-              are +EV after fees.
+              Prices every upcoming {SCAN_LEAGUES.slice(0, -1).join(", ")}, and {SCAN_LEAGUES.at(-1)} match on Kalshi
+              against the sharp books, researches the ones Kalshi has cheap, and deep-checks the finalists with hard match
+              data. The AI can veto a price edge, never invent one. Season-long title races live in the Waiting Game.
             </p>
           </div>
         </div>
@@ -252,7 +285,7 @@ export function Scanner({
           ) : (
             <>
               {frame === "futures" ? <Hourglass className="size-4" /> : <Radar className="size-4" />}
-              {frame === "futures" ? "Generate Best Waiting Game Ticket" : `Generate Best 5-Leg Parlay · ${windowLabel}`}
+              {frame === "futures" ? "Generate Best Waiting Game Picks" : `Generate Best Picks · ${windowLabel}`}
             </>
           )}
         </button>
@@ -261,7 +294,10 @@ export function Scanner({
         )}
         {loading && (
           <p className={cn("text-xs", T.muted)}>
-            Full-market analysis: every active {frame === "futures" ? "title market" : "fixture"} in {leagues.size === SCAN_LEAGUES.length ? "all leagues" : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is researched, 16 at a time, against your Bet Vault record — only legs backed by verifiable stats make the ticket. Bigger windows take up to a few minutes.
+            Full-market analysis: every active {frame === "futures" ? "title market" : "fixture"} in{" "}
+            {leagues.size === SCAN_LEAGUES.length ? "all leagues" : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is
+            priced against the sharp books, screened 16 at a time against your Bet Vault record, then the finalists are
+            deep-checked. Bigger windows take up to a few minutes.
           </p>
         )}
         {error && <p className="text-xs text-[#FF3B30]">{error}</p>}
@@ -277,8 +313,10 @@ export function Scanner({
           <div className={cn(T.card, "flex flex-col gap-4 p-4 sm:p-5")}>
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p className={T.label}>
-                {shown.length}-Leg Ticket · {windowLabel} · scanned {rec.scanned.fixtures}{" "}
-                {rec.scope?.window === "futures" ? "markets" : "fixtures"}, researched {rec.scanned.researched}
+                {shown.length} Pick{shown.length === 1 ? "" : "s"} · {windowLabel} · {rec.scanned.fixtures}{" "}
+                {rec.scope?.window === "futures" ? "markets" : "fixtures"}
+                {rec.scanned.sharpLines ? ` · ${rec.scanned.sharpLines} sharp-priced` : ""} · {rec.scanned.researched} researched
+                {rec.scanned.deep ? ` · ${rec.scanned.deep} deep-checked` : ""}
                 {rec.scanned.skipped ? ` (${rec.scanned.skipped} out of time)` : ""}
               </p>
               <button
@@ -292,7 +330,39 @@ export function Scanner({
               </button>
             </div>
 
-            {parlay && (
+            {shown.length >= 2 && (
+              <div
+                role="radiogroup"
+                aria-label="Ticket type"
+                className="flex w-fit gap-1 rounded-full border border-[#1E2638] bg-[#050D0A] p-1"
+              >
+                {(["singles", "parlay"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === m}
+                    onClick={() => {
+                      setMode(m);
+                      setLogged(null);
+                    }}
+                    className={cn(
+                      "rounded-full px-4 py-1.5 text-xs font-semibold transition-colors",
+                      mode === m ? "bg-(--accent) text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
+                    )}
+                  >
+                    {m === "singles" ? "Singles (recommended)" : `${shown.length}-Leg Parlay`}
+                  </button>
+                ))}
+              </div>
+            )}
+            {mode === "parlay" && parlay && (
+              <p className={cn("text-[11px]", T.muted)}>
+                A parlay pays Kalshi&apos;s fee on every leg and one miss loses it all: parlay EV {signedPct(parlay.ev)} on one
+                stake vs {signedPct(avgSingleEv)} per single, spread over {shown.length} independent bets.
+              </p>
+            )}
+            {mode === "parlay" && parlay && (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
                   { label: "Win Prob", value: pct(parlay.probability, parlay.probability < 0.1 ? 1 : 0) },
@@ -332,11 +402,40 @@ export function Scanner({
                         {signedPct(l.ev)} EV
                       </span>
                     </div>
+                    <div className="flex flex-wrap gap-1 pl-7">
+                      <span
+                        className={cn(
+                          "font-kalshi-bold rounded px-1.5 py-0.5 text-[10px]",
+                          l.basis === "sharp" ? "bg-(--accent-deep) text-(--accent)" : "bg-[#1E2638] text-[#F5F7F4]/80"
+                        )}
+                      >
+                        {l.basis === "sharp" && l.sharp
+                          ? `Sharp edge +${(l.sharp.edge * 100).toFixed(1)} pts`
+                          : "AI estimate only"}
+                      </span>
+                      {l.deep && <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px]">Deep-checked</span>}
+                      {l.footballData && <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px]">API-Football data</span>}
+                    </div>
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] tabular-nums text-[#F5F7F4]/60">
-                      <span className="text-white">Model {pct(l.modelProbability)}</span>
-                      <span>Market {l.leg.price}¢</span>
+                      {l.basis === "sharp" && l.sharp ? (
+                        <>
+                          <span className="text-white">
+                            Fair {pct(l.sharp.fair)} ({l.sharp.source})
+                          </span>
+                          <span>AI {pct(l.aiProbability ?? l.modelProbability)}</span>
+                        </>
+                      ) : (
+                        <span className="text-white">Model {pct(l.modelProbability)}</span>
+                      )}
+                      <span>Kalshi {l.leg.price}¢</span>
                       <span>Confidence {l.confidence}/10</span>
                       {l.opponentTier.playUpSpot && <span className={T.yes}>Play-up spot</span>}
+                      {mode === "singles" && (
+                        <span className="text-white">
+                          Stake {formatMoney(singleStakes[i]?.amount ?? 0)}
+                          {singleStakes[i]?.advice?.cappedBy ? ` (${singleStakes[i]!.advice!.cappedBy})` : ""}
+                        </span>
+                      )}
                     </div>
                     <p className="pl-7 text-xs text-[#F5F7F4]/85">{l.reason}</p>
                     {(l.reasoningStats ?? []).length > 0 && (
@@ -374,7 +473,48 @@ export function Scanner({
             )}
           </div>
 
-          {shown.length > 0 && (
+          {shown.length > 0 && (mode === "singles" || shown.length < 2) && (
+            <div className={cn(T.card, "flex flex-col gap-3 p-4 sm:p-5")}>
+              {bankroll.bankroll ? (
+                <p className={cn("text-xs", T.muted)}>
+                  Each single is sized by your Kelly setting and caps (Edge tab) ·{" "}
+                  <span className="text-white">{formatMoney(singlesTotal)}</span> total
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="relative sm:w-32">
+                    <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[#F5F7F4]/50">$</span>
+                    <input
+                      inputMode="decimal"
+                      value={wager}
+                      onChange={(e) => setWager(e.target.value.replace(/[^\d.]/g, "").slice(0, 9))}
+                      aria-label="Stake on each single, in dollars"
+                      className={cn(T.input, "pl-7 tabular-nums")}
+                    />
+                  </div>
+                  <p className={cn("text-[11px]", T.muted)}>
+                    Flat stake on each single — set a bankroll in the Edge tab for Kelly-sized stakes.
+                  </p>
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={!singlesTotal}
+                onClick={() => setLogged(onLogSingles(ticket, singleStakes.map((s) => s.amount)))}
+                className="font-kalshi-bold flex min-h-12 items-center justify-center gap-2 rounded-xl bg-(--accent) text-sm text-[#050D0A] hover:brightness-110 disabled:opacity-40"
+              >
+                <Vault className="size-4" /> Log {shown.length} Single{shown.length === 1 ? "" : "s"} to Vault ·{" "}
+                {formatMoney(singlesTotal)}
+              </button>
+              {logged && <p className={cn("text-xs", T.yes)}>{logged}</p>}
+              <p className={cn("text-[11px] leading-relaxed", T.muted)}>
+                Place each one on Kalshi as a limit order at or below the listed price to skip most of the taker fee.
+                Estimates, not guarantees. Bet only what you can afford to lose.
+              </p>
+            </div>
+          )}
+
+          {shown.length >= 2 && mode === "parlay" && (
             <div className={cn(T.card, "flex flex-col gap-3 p-4 sm:p-5")}>
               <button
                 type="button"

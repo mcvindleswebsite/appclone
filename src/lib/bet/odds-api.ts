@@ -3,8 +3,11 @@
  * de-vigged into fair win probabilities. Server-only: needs ODDS_API_KEY. No AI involved.
  */
 
+import { redis } from "@/lib/bet/store";
+
 const API = "https://api.the-odds-api.com/v4/sports";
-const CACHE_MS = 10 * 60 * 1000;
+/** 15 minutes: fresh enough for pre-match soccer, slow enough for the free tier's ~500 credits a month. */
+const CACHE_MS = 15 * 60 * 1000;
 
 /** Kalshi game-winner series → The Odds API sport key. */
 const SPORT_KEYS: [RegExp, string][] = [
@@ -54,14 +57,33 @@ export const sportKeyFor = (ticker: string) => {
 
 const cache = new Map<string, { at: number; events: Promise<OddsEvent[] | null> }>();
 
+/** Shared across serverless instances (Upstash), so scans, alerts, and the evaluator split one refresh. */
+const sharedKey = (sport: string) => `vindle_odds:${sport}`;
+
+const fetchEvents = async (sport: string, key: string): Promise<OddsEvent[] | null> => {
+  const shared = await redis(["GET", sharedKey(sport)]).catch(() => null);
+  if (typeof shared?.result === "string") {
+    try {
+      return JSON.parse(shared.result) as OddsEvent[];
+    } catch {
+      // Refetch below.
+    }
+  }
+  // decimal odds, US + EU books (EU carries Pinnacle); 2 credits per refresh on the free tier.
+  const url = `${API}/${sport}/odds?apiKey=${encodeURIComponent(key)}&regions=us,eu&markets=h2h&oddsFormat=decimal`;
+  const events = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8000) })
+    .then((r) => (r.ok ? (r.json() as Promise<OddsEvent[]>) : null))
+    .catch(() => null);
+  if (events) {
+    await redis(["SET", sharedKey(sport), JSON.stringify(events), "EX", Math.round(CACHE_MS / 1000)]).catch(() => null);
+  }
+  return events;
+};
+
 const eventsFor = (sport: string, key: string) => {
   const hit = cache.get(sport);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.events;
-  // decimal odds, US + EU books (EU carries Pinnacle); 2 credits per refresh on the free tier.
-  const url = `${API}/${sport}/odds?apiKey=${encodeURIComponent(key)}&regions=us,eu&markets=h2h&oddsFormat=decimal`;
-  const events = fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8000) })
-    .then((r) => (r.ok ? (r.json() as Promise<OddsEvent[]>) : null))
-    .catch(() => null);
+  const events = fetchEvents(sport, key);
   cache.set(sport, { at: Date.now(), events });
   return events;
 };

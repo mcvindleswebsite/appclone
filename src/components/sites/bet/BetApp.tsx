@@ -1,14 +1,25 @@
 "use client";
 
-import { Brain, Calculator, Cloud, CloudOff, KeyRound, Loader2, Sparkles } from "lucide-react";
+import { BellRing, Brain, Calculator, Cloud, CloudOff, KeyRound, Loader2, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandLogo } from "@/app/bet/components/BrandLogo";
+import {
+  adviseStake,
+  correlationWarnings,
+  DEFAULT_BANKROLL,
+  exposureToday,
+  KELLY_OPTIONS,
+  loadBankroll,
+  saveBankroll,
+  type BankrollSettings,
+} from "@/lib/bet/bankroll";
 import {
   evaluate,
   evaluateParlay,
   formatAmerican,
   kalshiDecimal,
+  kalshiFee,
   probToAmerican,
   ticketDecimal,
   RISK_PROFILES,
@@ -36,7 +47,7 @@ import { pickOutcome, settleKalshi, tickerLink } from "@/lib/bet/kalshi-link";
 import { emptyLeg } from "@/lib/bet/parse-slip";
 import { DEFAULT_WAGER, formatMoney, withPnl } from "@/lib/bet/pnl";
 import { cn } from "@/lib/utils";
-import type { BetRecord, BetSlip, Outcome, RiskLevel, SlipAnalysis, SoccerRecommendation } from "@/types/bet";
+import type { BetLeg, BetRecord, BetSlip, Outcome, RiskLevel, SlipAnalysis, SoccerRecommendation } from "@/types/bet";
 
 import { BetVault } from "./BetVault";
 import { EdgeLab } from "./EdgeLab";
@@ -44,6 +55,7 @@ import { KalshiLinkImport } from "./KalshiLinkImport";
 import { LegEditor } from "./LegEditor";
 import { ParlayCard } from "./ParlayCard";
 import { PickCard } from "./PickCard";
+import { GAP_ALERTS_STORAGE, usePriceGaps } from "./PriceGaps";
 import { RiskSlider } from "./RiskSlider";
 import { Scanner } from "./Scanner";
 import { SlipReader } from "./SlipReader";
@@ -134,13 +146,17 @@ const importedRecord = (
 const scannerRecord = (slip: BetSlip, rec: SoccerRecommendation, wager: number, risk: RiskLevel): BetRecord => {
   const decimal = rec.legs.reduce((acc, l) => acc * kalshiDecimal(l.leg.price ?? 50), 1);
   const probability = rec.parlay?.probability ?? rec.legs[0]?.modelProbability ?? 0;
+  const single = rec.legs.length === 1 ? rec.legs[0] : null;
   return withPnl({
     ...newRecordBase(),
     updatedAt: Date.now(),
     slip,
     risk,
-    side: null,
-    verdict: `AI SCANNER PICK (${rec.legs.length} legs)`,
+    // A single is a YES buy, so it gets CLV like any evaluated pick.
+    side: single ? "YES" : null,
+    verdict: single
+      ? `${single.basis === "sharp" ? "SHARP EDGE" : "AI SCANNER"} SINGLE @ ${single.leg.price}¢`
+      : `AI SCANNER PICK (${rec.legs.length} legs)`,
     probability,
     edge: probability * decimal - 1,
     decimalOdds: decimal,
@@ -169,6 +185,14 @@ export function BetApp() {
   const [stake, setStake] = useState(DEFAULT_WAGER);
   const [stakeText, setStakeText] = useState(String(DEFAULT_WAGER));
   const recordsRef = useRef<BetRecord[]>([]);
+  const [bankroll, setBankroll] = useState<BankrollSettings>(DEFAULT_BANKROLL);
+  const [gapAlerts, setGapAlerts] = useState(false);
+  /** Clock for "today" (stake caps); ticks each minute. */
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   /** Bumped by every new slip, so a slow research reply for an old slip is discarded. */
   const evalSeq = useRef(0);
 
@@ -189,6 +213,8 @@ export function BetApp() {
   const notes = memoryNotes(buildInsights(records), slip);
   /** The Bet Vault summary sent with every Top Picks scan. */
   const profile = useMemo(() => vaultProfile(records), [records]);
+  const exposure = exposureToday(records, clock);
+  const correlations = correlationWarnings(slip);
 
   /** Writes records locally and, when a key is set, mirrors the changed ones to the API store. */
   const commit = useCallback(
@@ -233,6 +259,8 @@ export function BetApp() {
         setStake(savedStake);
         setStakeText(String(savedStake));
       }
+      setBankroll(loadBankroll());
+      setGapAlerts(localStorage.getItem(GAP_ALERTS_STORAGE) === "1");
       const key = localStorage.getItem(ACCESS_KEY_STORAGE) ?? "";
       setAccessKey(key);
       setBooted(true);
@@ -470,6 +498,43 @@ export function BetApp() {
     return `Logged ${rec.legs.length}-leg ticket to the Vault at ${formatMoney(wager)}.`;
   };
 
+  /** Scanner → vault, each leg as its own single at its own stake (zero-stake legs are skipped). */
+  const logSingles = (rec: SoccerRecommendation, stakes: number[]) => {
+    const made = rec.legs.flatMap((leg, i) => {
+      if (!(stakes[i] > 0)) return [];
+      const one: SoccerRecommendation = { ...rec, legs: [leg], parlay: null };
+      return [scannerRecord({ legs: [leg.leg], comboPrice: null, comboOdds: null }, one, stakes[i], risk)];
+    });
+    if (!made.length) return "Nothing to log — every stake is $0.";
+    commit([...made, ...recordsRef.current], made);
+    const total = made.reduce((s, r) => s + (r.wager ?? 0), 0);
+    return `Logged ${made.length} single${made.length > 1 ? "s" : ""} to the Vault · ${formatMoney(total)} total.`;
+  };
+
+  /** A price-gap alert → evaluator, as a one-leg slip; research runs when the key works. */
+  const evaluateLeg = (leg: BetLeg) => {
+    const next: BetSlip = { legs: [leg], comboPrice: null, comboOdds: null };
+    setSlip(next);
+    setOcrText(null);
+    setNotice(`Loaded ${leg.pick} from a price-gap alert.`);
+    setTab("evaluate");
+    void latest.current.run(next, true);
+  };
+
+  const changeBankroll = (next: BankrollSettings) => {
+    setBankroll(next);
+    saveBankroll(next);
+  };
+
+  const toggleGapAlerts = (on: boolean) => {
+    setGapAlerts(on);
+    try {
+      localStorage.setItem(GAP_ALERTS_STORAGE, on ? "1" : "0");
+    } catch {
+      // Private mode: the switch lasts for this visit.
+    }
+  };
+
   const changeStake = (value: number) => {
     setStake(value);
     if (value > 0) localStorage.setItem(STAKE_STORAGE, String(value));
@@ -572,6 +637,20 @@ export function BetApp() {
   const leg = slip.legs[0];
   /** Missing, rejected, or unusable key: every accent on the page turns red. */
   const keyBroken = booted && (!accessKey || typeof sync === "object");
+  const gaps = usePriceGaps(keyBroken ? "" : accessKey, gapAlerts);
+
+  /** Suggested stake for the slip on screen: the side or trimmed parlay the verdict backs. */
+  const advice = (() => {
+    if (multi && parlay && parlay.verdict !== "PASS") {
+      const line = parlay.trimmed ?? parlay.full;
+      return line.decimal ? adviseStake(bankroll, line.probability, line.decimal, exposure) : null;
+    }
+    if (!multi && single.side) {
+      const s = single.sides[single.side];
+      return adviseStake(bankroll, s.probability, 1 / (s.price + kalshiFee(s.price)), exposure);
+    }
+    return null;
+  })();
   const verdictTone = single.verdict === "BUY YES" ? T.yes : single.verdict === "BUY NO" ? T.no : "text-white";
   const marketProb = single.marketProbability;
 
@@ -609,6 +688,19 @@ export function BetApp() {
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
+            {gapAlerts && gaps.gaps.length > 0 && (
+              <button
+                type="button"
+                aria-label={`${gaps.gaps.length} price gap${gaps.gaps.length > 1 ? "s" : ""} — open Top Picks`}
+                onClick={() => setTab("scanner")}
+                className="relative rounded-lg p-1.5 text-(--accent) transition-colors hover:bg-[#121824]"
+              >
+                <BellRing className="size-4" />
+                <span className="font-kalshi-bold absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-(--accent) text-[9px] text-[#050D0A]">
+                  {gaps.gaps.length}
+                </span>
+              </button>
+            )}
             {/* The status pill disappears entirely while the key is broken; the red accent says it instead. */}
             {!keyBroken && (
               <span className={cn("hidden items-center gap-1.5 text-xs sm:flex", T.muted)}>
@@ -658,11 +750,25 @@ export function BetApp() {
             accessKey={accessKey}
             keyBroken={keyBroken}
             profile={profile}
+            bankroll={bankroll}
+            exposure={exposure}
+            gaps={gaps}
+            gapAlerts={gapAlerts}
+            onGapAlerts={toggleGapAlerts}
+            onEvaluateLeg={evaluateLeg}
             onImport={importRecommendation}
             onLog={logRecommendation}
+            onLogSingles={logSingles}
           />
         ) : tab === "edge" ? (
-          <EdgeLab records={records} calibration={fit} />
+          <EdgeLab
+            records={records}
+            calibration={fit}
+            accessKey={keyBroken ? "" : accessKey}
+            bankroll={bankroll}
+            exposure={exposure}
+            onBankroll={changeBankroll}
+          />
         ) : tab === "vault" ? (
           <BetVault
             records={records}
@@ -692,6 +798,11 @@ export function BetApp() {
                 {notice && <p className="text-xs text-[#F5F7F4]">{notice}</p>}
 
                 <LegEditor slip={slip} onChange={editSlip} />
+                {correlations.map((w) => (
+                  <p key={w} className="text-xs text-[#FF3B30]">
+                    ▲ {w}
+                  </p>
+                ))}
 
                 {ocrText && (
                   <details className="text-xs">
@@ -742,6 +853,32 @@ export function BetApp() {
                     })()}
                   </p>
                 </div>
+                {advice ? (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className={T.muted}>
+                      Suggested{" "}
+                      <span className="font-kalshi-bold text-white">{formatMoney(advice.stake)}</span> ·{" "}
+                      {KELLY_OPTIONS.find((o) => o.value === bankroll.kellyFraction)?.label ?? bankroll.kellyFraction} Kelly
+                      {advice.cappedBy ? ` · capped by ${advice.cappedBy}` : ""} · {formatMoney(advice.remainingToday)} left today
+                    </span>
+                    {advice.stake > 0 && advice.stake !== stake && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStakeText(String(advice.stake));
+                          changeStake(advice.stake);
+                        }}
+                        className="rounded-md bg-[#1E2638] px-2 py-1 font-semibold hover:bg-(--accent-deep)"
+                      >
+                        Use
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  !bankroll.bankroll && (
+                    <p className={cn("text-[11px]", T.muted)}>Set a bankroll in the Edge tab for a Kelly-sized stake.</p>
+                  )
+                )}
               </div>
 
               <button

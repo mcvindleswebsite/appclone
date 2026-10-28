@@ -13,10 +13,13 @@ import {
 } from "@/lib/bet/edge";
 import { slipLabel } from "@/lib/bet/history";
 import { formatMoney } from "@/lib/bet/pnl";
+import type { BankrollSettings } from "@/lib/bet/bankroll";
 import { cn } from "@/lib/utils";
 import type { BetRecord } from "@/types/bet";
 
+import { BankrollPanel } from "./BankrollPanel";
 import { T } from "./theme";
+import { TrackRecord } from "./TrackRecord";
 
 const DIMENSIONS: BreakdownDimension[] = ["Market", "Sport", "Legs", "Source", "Risk"];
 const pct = (n: number, digits = 0) => `${(n * 100).toFixed(digits)}%`;
@@ -99,7 +102,22 @@ function CalibrationChart({ buckets }: { buckets: CalibrationBucket[] }) {
   );
 }
 
-export function EdgeLab({ records, calibration: cal }: { records: BetRecord[]; calibration: Calibration }) {
+export function EdgeLab({
+  records,
+  calibration: cal,
+  accessKey,
+  bankroll,
+  exposure,
+  onBankroll,
+}: {
+  records: BetRecord[];
+  calibration: Calibration;
+  accessKey: string;
+  bankroll: BankrollSettings;
+  /** Dollars staked today. */
+  exposure: number;
+  onBankroll: (next: BankrollSettings) => void;
+}) {
   const [dim, setDim] = useState<BreakdownDimension>("Market");
   const clv = clvSummary(records);
   const rows = breakdown(records, dim);
@@ -111,6 +129,9 @@ export function EdgeLab({ records, calibration: cal }: { records: BetRecord[]; c
 
   return (
     <div className="flex flex-col gap-4">
+      <BankrollPanel settings={bankroll} exposure={exposure} onChange={onBankroll} />
+      <TrackRecord accessKey={accessKey} />
+      <h2 className="font-kalshi-bold mt-2 text-lg">Your Bets</h2>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tile
           label="Avg CLV"
