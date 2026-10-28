@@ -97,11 +97,18 @@ const tokens = (name: string) =>
     .split(/\s+/)
     .filter(Boolean);
 
-/** Every word Kalshi uses ("New York R") starts a word of the book's name ("New York Rangers"). */
+/** A short token that spells the initials of consecutive book words ("rb" → "red bulls"). */
+const initials = (t: string, b: string[]) =>
+  t.length >= 2 && t.length <= 3 && b.some((_, i) => b.slice(i, i + t.length).map((w) => w[0]).join("") === t);
+
+/**
+ * Every word Kalshi uses ("New York R") starts a word of the book's name ("New York Rangers"),
+ * or abbreviates a run of them ("New York RB" → "New York Red Bulls").
+ */
 const sameTeam = (kalshi: string, book: string) => {
   const k = tokens(kalshi);
   const b = tokens(book);
-  return k.length > 0 && k.every((t) => b.some((w) => w.startsWith(t)));
+  return k.length > 0 && k.every((t) => b.some((w) => w.startsWith(t)) || initials(t, b));
 };
 
 const isDraw = (pick: string) => /^(tie|draw)$/i.test(pick.trim());
