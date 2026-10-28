@@ -23,6 +23,7 @@ const SPORT_KEYS: [RegExp, string][] = [
   [/^KXUCLGAME$/, "soccer_uefa_champs_league"],
   [/^KXUELGAME$/, "soccer_uefa_europa_league"],
   [/^KXMLSGAME$/, "soccer_usa_mls"],
+  [/^KXSAUDIPLGAME$/, "soccer_saudi_arabia_pro_league"],
 ];
 
 interface OddsEvent {

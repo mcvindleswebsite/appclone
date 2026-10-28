@@ -101,8 +101,14 @@ const stampOutcome = (record: BetRecord, outcome: Outcome): BetRecord => withPnl
 
 const stampWager = (record: BetRecord, wager: number): BetRecord => withPnl({ ...record, wager, updatedAt: Date.now() });
 
-/** A vault entry for a bet already placed on Kalshi. */
-const importedRecord = (slip: BetSlip, outcome: Outcome, paidCents: number | null, wager: number): BetRecord => {
+/** A vault entry for a bet already placed, from a Kalshi link or a slip photo. */
+const importedRecord = (
+  slip: BetSlip,
+  outcome: Outcome,
+  paidCents: number | null,
+  wager: number,
+  summary = "Added from a Kalshi link."
+): BetRecord => {
   const price = paidCents ?? (outcome === "PENDING" ? (slip.legs.length > 1 ? slip.comboPrice : slip.legs[0].price) : null);
   return withPnl({
     ...newRecordBase(),
@@ -117,7 +123,7 @@ const importedRecord = (slip: BetSlip, outcome: Outcome, paidCents: number | nul
     // What was paid, else the ticket's current market odds.
     decimalOdds: price ? kalshiDecimal(price) : (ticketDecimal(slip, null) ?? undefined),
     wager,
-    summary: "Added from a Kalshi link.",
+    summary,
     ai: false,
     imported: true,
   });
@@ -486,6 +492,15 @@ export function BetApp() {
     return `Added ${data.legsTotal > 1 ? `${data.legsTotal}-leg slip` : data.legs[0].pick} as ${data.outcome}${legs}${skipped}.`;
   };
 
+  /** Logs a bet read from a slip photo in the Vault (OCR or vision), as a pending pick. */
+  const photoAdd = (parsed: BetSlip, paidCents: number | null, wager: number) => {
+    const legs = parsed.legs.filter((l) => l.pick || l.market || l.matchup);
+    if (!legs.length) throw new Error("No picks found in that photo — try a sharper screenshot or paste the Kalshi link.");
+    const record = importedRecord({ ...parsed, legs }, "PENDING", paidCents, wager, "Added from a slip photo.");
+    commit([record, ...recordsRef.current], [record]);
+    return `Added ${legs.length > 1 ? `${legs.length}-leg slip` : legs[0].pick || legs[0].market} from the photo as PENDING.`;
+  };
+
   /**
    * Re-checks pending picks that have Kalshi tickers: fills in each leg's result as games
    * finish, and settles the pick once the outcome is known.
@@ -645,6 +660,8 @@ export function BetApp() {
             onOutcome={setOutcome}
             onDelete={removeRecord}
             onQuickAdd={quickAdd}
+            onPhotoAdd={photoAdd}
+            accessKey={keyBroken ? "" : accessKey}
             onRefresh={syncResults}
           />
         ) : (

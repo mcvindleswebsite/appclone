@@ -1,5 +1,6 @@
 import { extractTickers, splitLinks } from "@/lib/bet/kalshi-link";
 import { detectSport } from "@/lib/bet/parse-slip";
+import type { ScanLeague, ScanScope } from "@/lib/bet/scan-scope";
 import { estimateTiming, type LegTiming } from "@/lib/bet/timing";
 import type { BetLeg, KalshiImport, KalshiMarketOption, KalshiSlipImport, LegResult } from "@/types/bet";
 
@@ -359,51 +360,72 @@ export const resolveClosingLines = async (tickers: string[]): Promise<Record<str
 
 /* ------------------------------ Soccer scanner ----------------------------- */
 
-/** Kalshi match-winner series for the leagues the scanner covers. */
-export const SOCCER_LEAGUES = [
-  { series: "KXEPLGAME", name: "Premier League" },
-  { series: "KXLALIGAGAME", name: "La Liga" },
-  { series: "KXSERIEAGAME", name: "Serie A" },
-  { series: "KXBUNDESLIGAGAME", name: "Bundesliga" },
-  { series: "KXLIGUE1GAME", name: "Ligue 1" },
-  { series: "KXUCLGAME", name: "Champions League" },
-  { series: "KXUELGAME", name: "Europa League" },
-  { series: "KXMLSGAME", name: "MLS" },
-] as const;
+/**
+ * Kalshi series for the leagues the scanner covers: match winners, plus the season-long
+ * title market where Kalshi lists one (the Saudi Pro League has none yet).
+ */
+export const SOCCER_LEAGUES: { series: string; futures: string | null; name: ScanLeague }[] = [
+  { series: "KXEPLGAME", futures: "KXPREMIERLEAGUE", name: "Premier League" },
+  { series: "KXLALIGAGAME", futures: "KXLALIGA", name: "La Liga" },
+  { series: "KXSERIEAGAME", futures: "KXSERIEA", name: "Serie A" },
+  { series: "KXBUNDESLIGAGAME", futures: "KXBUNDESLIGA", name: "Bundesliga" },
+  { series: "KXLIGUE1GAME", futures: "KXLIGUE1", name: "Ligue 1" },
+  { series: "KXUCLGAME", futures: "KXUCL", name: "Champions League" },
+  { series: "KXUELGAME", futures: "KXUEL", name: "Europa League" },
+  { series: "KXMLSGAME", futures: "KXMLSCUP", name: "MLS" },
+  { series: "KXSAUDIPLGAME", futures: null, name: "Saudi Pro League" },
+];
 
 export interface SoccerCandidate {
   leg: BetLeg;
   league: string;
   eventTicker: string;
-  /** Kalshi's expected settlement time (roughly two hours after kickoff). */
+  /** Kalshi's expected settlement time (roughly two hours after kickoff; season end for futures). */
   settlesAt: string;
   volume: number;
+  /** A season-long title market rather than a single match. */
+  futures?: boolean;
 }
 
 const HOUR = 60 * 60 * 1000;
 
+/** The longest match window a scan looks ahead. */
+const MAX_MATCH_DAYS = 35;
+
 /**
- * Open match-winner markets worth researching, with no AI involved: for each upcoming
- * match, the favorite (a team, never the draw) priced 40–85¢ — a real chance to win without
- * being a near-certainty that pays nothing — with a live bid and a tight spread.
+ * Open markets worth researching, with no AI involved. For a match window: each upcoming
+ * match's favorite (a team, never the draw) priced 40–85¢ — a real chance to win without
+ * being a near-certainty that pays nothing — with a live bid and a tight spread, kicking off
+ * inside the scope's range. For the Waiting Game: each league's title favorite priced
+ * 15–85¢, since a season-long market rarely has a team above 50¢.
  */
-export const soccerCandidates = async (): Promise<SoccerCandidate[]> => {
+export const soccerCandidates = async (scope: ScanScope): Promise<SoccerCandidate[]> => {
   const now = Date.now();
+  const futures = scope.window === "futures";
+  // Not started yet (settlement ~2h after kickoff), and never past the lookahead cap.
+  const from = Math.max(scope.from, now + 0.5 * HOUR);
+  const to = Math.min(scope.to, now + MAX_MATCH_DAYS * 24 * HOUR);
+  const leagues = SOCCER_LEAGUES.filter((l) => scope.leagues.includes(l.name) && (!futures || l.futures));
   const perLeague = await Promise.all(
-    SOCCER_LEAGUES.map(async ({ series, name }) => {
+    leagues.map(async ({ series, futures: futuresSeries, name }) => {
       const data = await get<{ events: ApiEvent[] }>(
-        `/events?series_ticker=${series}&status=open&with_nested_markets=true&limit=100`
+        `/events?series_ticker=${futures ? futuresSeries : series}&status=open&with_nested_markets=true&limit=200`
       ).catch(() => null);
       return (data?.events ?? []).flatMap((event): SoccerCandidate[] => {
-        const teams = (event.markets ?? []).filter((m) => m.status === "active" && !/^tie\b/i.test(m.yes_sub_title ?? m.title));
+        const teams = (event.markets ?? []).filter((m) => m.status === "active" && !/^tie/i.test(m.yes_sub_title ?? m.title));
         const favorite = teams.sort((a, b) => (cents(b.yes_ask_dollars) ?? 0) - (cents(a.yes_ask_dollars) ?? 0))[0];
         if (!favorite) return [];
         const ask = cents(favorite.yes_ask_dollars);
         const bid = cents(favorite.yes_bid_dollars);
         const settles = Date.parse(favorite.expected_expiration_time ?? "");
-        // Not started yet (settlement ~2h after kickoff) and within the next week.
-        if (!Number.isFinite(settles) || settles < now + 2.5 * HOUR || settles > now + 7 * 24 * HOUR) return [];
-        if (ask === null || bid === null || ask < 40 || ask > 85 || ask - bid > 3) return [];
+        if (!Number.isFinite(settles) || ask === null || bid === null) return [];
+        if (futures) {
+          if (settles < now || ask < 15 || ask > 85 || ask - bid > 4) return [];
+        } else {
+          const kickoff = settles - 2 * HOUR;
+          if (kickoff < from || kickoff > to) return [];
+          if (ask < 40 || ask > 85 || ask - bid > 3) return [];
+        }
         const volume = Number(favorite.volume_fp ?? 0);
         return [
           {
@@ -412,6 +434,7 @@ export const soccerCandidates = async (): Promise<SoccerCandidate[]> => {
             eventTicker: event.event_ticker,
             settlesAt: new Date(settles).toISOString(),
             volume: Number.isFinite(volume) ? volume : 0,
+            ...(futures ? { futures: true } : {}),
           },
         ];
       });

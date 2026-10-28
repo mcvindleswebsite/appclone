@@ -3,6 +3,7 @@ import { decimalToAmerican, kalshiDecimal, kalshiFee } from "@/lib/bet/engine";
 import { soccerCandidates, type SoccerCandidate } from "@/lib/bet/kalshi-api";
 import { BET_MODEL } from "@/lib/bet/model";
 import { researchLeg } from "@/lib/bet/research";
+import { isScanLeague, isTimeWindow, SCAN_LEAGUES, windowRange, type ScanScope } from "@/lib/bet/scan-scope";
 import { redis } from "@/lib/bet/store";
 import type { RecommendedLeg, SoccerRecommendation } from "@/types/bet";
 
@@ -14,8 +15,10 @@ const PARLAY_LEGS = 5;
 /** Legs sent to AI research per scan: enough to find 5 that clear the bar, few enough to stay cheap. */
 const RESEARCH_BUDGET = 12;
 const MAX_PER_LEAGUE = 3;
-/** A recommended leg must be at least a coin flip in the model's view. */
+/** A recommended match leg must be at least a coin flip in the model's view. */
 const MIN_PROBABILITY = 0.5;
+/** Title races rarely have a coin-flip favorite, so a futures leg only needs a real chance. */
+const MIN_FUTURES_PROBABILITY = 0.25;
 const CACHE_KEY = "vindle_soccer_recs";
 const CACHE_SECONDS = 30 * 60;
 
@@ -36,8 +39,8 @@ const shortlist = (candidates: SoccerCandidate[]) => {
     .slice(0, RESEARCH_BUDGET);
 };
 
-const scan = async (): Promise<SoccerRecommendation> => {
-  const candidates = await soccerCandidates();
+const scan = async (scope: ScanScope): Promise<SoccerRecommendation> => {
+  const candidates = await soccerCandidates(scope);
   const picked = shortlist(candidates);
   const researched = await Promise.all(picked.map(async (c) => ({ c, a: await researchLeg(c.leg) })));
 
@@ -51,6 +54,7 @@ const scan = async (): Promise<SoccerRecommendation> => {
         leg: c.leg,
         league: c.league,
         settlesAt: c.settlesAt,
+        ...(c.futures ? { futures: true } : {}),
         modelProbability: p,
         marketProbability: price / 100,
         ev,
@@ -64,8 +68,9 @@ const scan = async (): Promise<SoccerRecommendation> => {
 
   // Only legs the model rates as real value: +EV after Kalshi's fee, a coin flip or better,
   // and never a bum pick or trap game. Ranked by edge after fees, then win probability.
+  const minProbability = scope.window === "futures" ? MIN_FUTURES_PROBABILITY : MIN_PROBABILITY;
   const qualified = scored
-    .filter((l) => l.ev > 0 && l.modelProbability >= MIN_PROBABILITY && l.rating !== "BUM PICK" && !l.opponentTier.trapGame)
+    .filter((l) => l.ev > 0 && l.modelProbability >= minProbability && l.rating !== "BUM PICK" && !l.opponentTier.trapGame)
     .sort((a, b) => {
       const edge = (l: RecommendedLeg) => l.modelProbability - l.marketProbability - kalshiFee(l.marketProbability);
       return edge(b) - edge(a) || b.modelProbability - a.modelProbability;
@@ -86,14 +91,34 @@ const scan = async (): Promise<SoccerRecommendation> => {
     generatedAt: new Date().toISOString(),
     note:
       legs.length < PARLAY_LEGS
-        ? `Only ${legs.length} leg${legs.length === 1 ? "" : "s"} cleared the bar (+EV, ≥50% to win, no bum picks) — the scanner doesn't pad a ticket with -EV legs.`
+        ? `Only ${legs.length} leg${legs.length === 1 ? "" : "s"} cleared the bar (+EV, ≥${Math.round(minProbability * 100)}% to win, no bum picks) — the scanner doesn't pad a ticket with -EV legs.`
         : null,
     model: BET_MODEL,
+    scope,
   };
 };
 
+/** The scope from the request body; anything missing falls back to every league, this week. */
+const readScope = async (request: Request): Promise<ScanScope> => {
+  const body = (await request.json().catch(() => ({}))) as Partial<Record<keyof ScanScope, unknown>>;
+  const window = isTimeWindow(body.window) ? body.window : "week";
+  const fallback = windowRange(window, Date.now());
+  const from = typeof body.from === "number" && Number.isFinite(body.from) ? body.from : fallback.from;
+  const to = typeof body.to === "number" && Number.isFinite(body.to) ? body.to : fallback.to;
+  const leagues = Array.isArray(body.leagues) ? body.leagues.filter(isScanLeague) : [];
+  return { window, from, to: Math.max(from, to), leagues: leagues.length ? leagues : [...SCAN_LEAGUES] };
+};
+
+/** One cache entry per league set and hour-rounded window, so different scopes don't collide. */
+const cacheKey = (scope: ScanScope) => {
+  const hour = 60 * 60 * 1000;
+  const range = scope.window === "futures" ? "" : `:${Math.floor(scope.from / hour)}`;
+  return `${CACHE_KEY}:${scope.window}${range}:${[...scope.leagues].sort().join(",")}`;
+};
+
 /**
- * Scans upcoming soccer matches on Kalshi and returns the best +EV legs as a 5-leg ticket.
+ * Scans soccer markets on Kalshi in the requested leagues and time window (body: ScanScope)
+ * and returns the best +EV legs as a 5-leg ticket.
  * Results are cached for 30 minutes (when Upstash is connected) because each scan runs a
  * dozen AI research calls; `?fresh=1` forces a new scan.
  */
@@ -103,17 +128,19 @@ export async function POST(request: Request) {
   if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: "AI not configured" }, { status: 503 });
 
   const fresh = new URL(request.url).searchParams.get("fresh") === "1";
+  const scope = await readScope(request);
+  const key = cacheKey(scope);
   if (!fresh) {
-    const cached = await redis(["GET", CACHE_KEY]).catch(() => null);
+    const cached = await redis(["GET", key]).catch(() => null);
     if (typeof cached?.result === "string") {
       return Response.json({ ...(JSON.parse(cached.result) as SoccerRecommendation), cached: true });
     }
   }
 
   try {
-    const result = await scan();
+    const result = await scan(scope);
     if (result.legs.length) {
-      await redis(["SET", CACHE_KEY, JSON.stringify(result), "EX", CACHE_SECONDS]).catch(() => null);
+      await redis(["SET", key, JSON.stringify(result), "EX", CACHE_SECONDS]).catch(() => null);
     }
     return Response.json(result);
   } catch {

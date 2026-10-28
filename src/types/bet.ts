@@ -1,3 +1,5 @@
+import type { ScanScope } from "@/lib/bet/scan-scope";
+
 export type Side = "YES" | "NO";
 export type RiskLevel = 1 | 2 | 3 | 4 | 5;
 export type Outcome = "PENDING" | "WIN" | "LOSS";
@@ -214,6 +216,8 @@ export interface RecommendedLeg {
   leg: BetLeg;
   league: string;
   settlesAt: string;
+  /** A season-long title market (the Waiting Game) rather than a single match. */
+  futures?: boolean;
   /** Model's probability the leg wins. */
   modelProbability: number;
   /** What the Kalshi price implies. */
@@ -243,4 +247,6 @@ export interface SoccerRecommendation {
   /** Present when fewer than 5 legs cleared the bar; the scanner never pads with -EV legs. */
   note: string | null;
   model: string;
+  /** The leagues and time window this scan covered. */
+  scope?: ScanScope;
 }

@@ -9,8 +9,9 @@ import { DEFAULT_WAGER, formatMoney, profitSummary } from "@/lib/bet/pnl";
 import { comboMarkup, ticketClv } from "@/lib/bet/edge";
 import { legTiming, slipTiming, timingTickers, type LegTiming, type SlipTiming } from "@/lib/bet/timing";
 import { cn } from "@/lib/utils";
-import type { BetLeg, BetRecord, LegResult, Outcome } from "@/types/bet";
+import type { BetLeg, BetRecord, BetSlip, LegResult, Outcome } from "@/types/bet";
 
+import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
 
 const FILTERS = ["ALL", "PENDING", "WIN", "LOSS"] as const;
@@ -126,25 +127,54 @@ function LegFinish({ leg, live, now }: { leg: BetLeg; live: Record<string, LegTi
 const verdictColor = (verdict: string) =>
   /^(BUY YES|PLAY)/.test(verdict) ? T.yes : verdict.startsWith("BUY NO") ? T.no : T.muted;
 
-/** The vault's link bar: logs a bet already placed on Kalshi, settled or still open. */
+/**
+ * The vault's add bar: logs a bet already placed, from a Kalshi link (settled or still open)
+ * or from a photo of the slip, read by the same vision/OCR scanner as the Evaluate tab.
+ */
 function QuickAdd({
   onQuickAdd,
+  onPhotoAdd,
+  accessKey,
 }: {
   onQuickAdd: (links: string, paidCents: number | null, wager: number) => Promise<string>;
+  onPhotoAdd: (slip: BetSlip, paidCents: number | null, wager: number) => string;
+  accessKey: string;
 }) {
   const [links, setLinks] = useState("");
   const [paid, setPaid] = useState("");
   const [wager, setWager] = useState(String(DEFAULT_WAGER));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  const [ocrText, setOcrText] = useState<string | null>(null);
+
+  const paidCents = () => {
+    const n = Number(paid);
+    return n >= 1 && n <= 99 ? n : null;
+  };
+
+  // Latest fields for the memoized photo handler (SlipReader re-binds its paste listener on change).
+  const latest = useRef({ onPhotoAdd, paidCents, wager });
+  useEffect(() => {
+    latest.current = { onPhotoAdd, paidCents, wager };
+  });
+
+  const onParsed = useCallback((slip: BetSlip, raw: string) => {
+    const { onPhotoAdd: add, paidCents: paidNow, wager: wagerNow } = latest.current;
+    setOcrText(raw);
+    try {
+      setMessage({ text: add(slip, paidNow(), Number(wagerNow) || 0), ok: true });
+      setPaid("");
+    } catch (error) {
+      setMessage({ text: error instanceof Error ? error.message : "Couldn't read that slip", ok: false });
+    }
+  }, []);
 
   const submit = async () => {
     if (!links.trim()) return;
     setBusy(true);
     setMessage(null);
     try {
-      const n = Number(paid);
-      setMessage({ text: await onQuickAdd(links.trim(), n >= 1 && n <= 99 ? n : null, Number(wager) || 0), ok: true });
+      setMessage({ text: await onQuickAdd(links.trim(), paidCents(), Number(wager) || 0), ok: true });
       setLinks("");
       setPaid("");
     } catch (error) {
@@ -207,7 +237,22 @@ function QuickAdd({
           {busy && <Loader2 className="size-3.5 animate-spin" />} Add to Vault
         </button>
       </form>
+      <div className={cn("flex items-center gap-3 text-[11px] uppercase", T.muted)}>
+        <span className="h-px flex-1 bg-[#1E2638]" />
+        or scan a slip photo
+        <span className="h-px flex-1 bg-[#1E2638]" />
+      </div>
+      <SlipReader onParsed={onParsed} accessKey={accessKey} />
+      <p className={cn("text-[11px]", T.muted)}>
+        Betting slip or Kalshi ticket screenshot — logged as pending with the Paid ¢ and Stake above.
+      </p>
       {message && <p className={cn("text-xs", message.ok ? T.yes : T.no)}>{message.text}</p>}
+      {ocrText && (
+        <details className="text-xs">
+          <summary className={cn("cursor-pointer", T.muted)}>Raw scan text</summary>
+          <pre className={cn(T.inset, "mt-2 max-h-40 overflow-auto p-3 whitespace-pre-wrap", T.muted)}>{ocrText}</pre>
+        </details>
+      )}
     </div>
   );
 }
@@ -217,12 +262,18 @@ export function BetVault({
   onOutcome,
   onDelete,
   onQuickAdd,
+  onPhotoAdd,
+  accessKey,
   onRefresh,
 }: {
   records: BetRecord[];
   onOutcome: (id: string, outcome: Outcome) => void;
   onDelete: (id: string) => void;
   onQuickAdd: (links: string, paidCents: number | null, wager: number) => Promise<string>;
+  /** Logs a slip read from a photo; throws when the photo had no picks. */
+  onPhotoAdd: (slip: BetSlip, paidCents: number | null, wager: number) => string;
+  /** Working access key for vision reads; empty falls back to on-device OCR. */
+  accessKey: string;
   onRefresh: () => Promise<string>;
 }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
@@ -319,7 +370,7 @@ export function BetVault({
 
   return (
     <div className="flex flex-col gap-4">
-      <QuickAdd onQuickAdd={onQuickAdd} />
+      <QuickAdd onQuickAdd={onQuickAdd} onPhotoAdd={onPhotoAdd} accessKey={accessKey} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
