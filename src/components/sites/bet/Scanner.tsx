@@ -178,6 +178,8 @@ export function Scanner({
   onLogSingles: (rec: SoccerRecommendation, stakes: number[]) => string;
 }) {
   const [mode, setMode] = useState<"singles" | "parlay">("singles");
+  /** What a pick rests on: the AI's own estimate (default) or a price edge vs the sharp books. */
+  const [pickMode, setPickMode] = useState<"ai" | "sharp">("ai");
   /** On-demand deep checks in flight or failed, by ticker. */
   const [deepState, setDeepState] = useState<Record<string, { busy: boolean; error?: string }>>({});
 
@@ -195,7 +197,8 @@ export function Scanner({
           league: l.league,
           kickoffTime: l.kickoffTime,
           volume: l.volume ?? 0,
-          sharp: l.sharp,
+          // An AI pick is judged on the AI's estimate; the books' price only gates price-edge picks.
+          sharp: l.basis === "sharp" ? l.sharp : undefined,
           futures: !!l.futures,
           history: profile,
         }),
@@ -264,7 +267,8 @@ export function Scanner({
   // The last scan covered a different timeframe or leagues than the ones picked now.
   const stale =
     !!rec?.scope &&
-    (rec.scope.window !== frame ||
+    ((rec.mode ?? "sharp") !== pickMode ||
+      rec.scope.window !== frame ||
       rec.scope.leagues.length !== leagues.size ||
       rec.scope.leagues.some((l) => !leagues.has(l)));
 
@@ -278,7 +282,7 @@ export function Scanner({
       const response = await fetch(`/api/recommendations${fresh ? "?fresh=1" : ""}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-bet-key": accessKey },
-        body: JSON.stringify({ window: frame, ...windowRange(frame, at), leagues: [...leagues], history: profile }),
+        body: JSON.stringify({ window: frame, ...windowRange(frame, at), leagues: [...leagues], history: profile, mode: pickMode }),
       });
       const data = (await response.json()) as SoccerRecommendation | { error: string };
       if ("error" in data) setError(data.error);
@@ -318,11 +322,40 @@ export function Scanner({
           <div>
             <h2 className="font-kalshi-bold text-lg">AI Soccer Scanner</h2>
             <p className={cn("text-sm", T.muted)}>
-              Prices every upcoming {SCAN_LEAGUES.slice(0, -1).join(", ")}, and {SCAN_LEAGUES.at(-1)} match on Kalshi
-              against the sharp books for free, then spends AI research only on the 15 best candidates. Deep-check any
-              pick before you bet it. The AI can veto a price edge, never invent one. Season-long title races live in the
-              Waiting Game.
+              Covers {SCAN_LEAGUES.slice(0, -1).join(", ")}, and {SCAN_LEAGUES.at(-1)} on Kalshi. AI Picks researches
+              the 15 most-traded matches and keeps the ones where its own read beats the price; Price Edges keeps only
+              matches Kalshi has cheaper than the sharp books. Deep-check any pick before you bet it. Season-long title
+              races live in the Waiting Game.
             </p>
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <p className={T.label}>Pick Style</p>
+          <div role="radiogroup" aria-label="Pick style" className="grid grid-cols-2 gap-1 rounded-xl border border-[#1E2638] bg-[#050D0A] p-1">
+            {(
+              [
+                ["ai", "AI Picks", "The AI's read beats the Kalshi price"],
+                ["sharp", "Price Edges", "Kalshi cheaper than the sharp books"],
+              ] as const
+            ).map(([id, label, sub]) => (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={pickMode === id}
+                onClick={() => {
+                  setPickMode(id);
+                  setLogged(null);
+                }}
+                className={cn(
+                  "flex flex-col items-center rounded-lg px-2 py-2 transition-colors",
+                  pickMode === id ? "bg-(--accent) text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
+                )}
+              >
+                <span className="text-xs font-semibold">{label}</span>
+                <span className={cn("text-[10px]", pickMode === id ? "text-[#050D0A]/70" : "text-[#F5F7F4]/40")}>{sub}</span>
+              </button>
+            ))}
           </div>
         </div>
         <TimeSlider
@@ -479,7 +512,7 @@ export function Scanner({
                       >
                         {l.basis === "sharp" && l.sharp
                           ? `Sharp edge +${(l.sharp.edge * 100).toFixed(1)} pts`
-                          : "AI estimate only"}
+                          : "AI pick"}
                       </span>
                       {l.deep && <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px]">Deep-checked</span>}
                       {l.footballData && <span className="rounded bg-[#1E2638] px-1.5 py-0.5 text-[10px]">API-Football data</span>}
@@ -493,7 +526,14 @@ export function Scanner({
                           <span>AI {pct(l.aiProbability ?? l.modelProbability)}</span>
                         </>
                       ) : (
-                        <span className="text-white">Model {pct(l.modelProbability)}</span>
+                        <>
+                          <span className="text-white">AI {pct(l.modelProbability)}</span>
+                          {l.sharp && (
+                            <span className={l.sharp.fair >= l.modelProbability - 0.03 ? undefined : "text-[#FF3B30]/90"}>
+                              Books {pct(l.sharp.fair)} ({l.sharp.source})
+                            </span>
+                          )}
+                        </>
                       )}
                       <span>Kalshi {l.leg.price}¢</span>
                       <span>Confidence {l.confidence}/10</span>

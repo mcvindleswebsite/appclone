@@ -32,6 +32,11 @@ const CACHE_KEY = "vindle_soccer_recs";
 const CACHE_SECONDS = 30 * 60;
 
 type Candidate = SoccerCandidate & { sharp?: SharpLine };
+/**
+ * "ai": picks rest on the AI's own estimate beating the Kalshi price (the books' price is
+ * shown, not used). "sharp": picks need Kalshi cheaper than the sharp books; the AI only vetoes.
+ */
+type PickMode = SoccerRecommendation["mode"] & string;
 type Researched = { c: Candidate; a: LegAnalysis };
 
 const timeout = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, ms)));
@@ -55,12 +60,13 @@ const pts = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)} pts`;
  * The fixed pick record: fixture facts from Kalshi, probability from the sharp books when
  * they price the match (else the AI), line value computed here, analysis from the model.
  */
-const toPick = ({ c, a }: Researched): RecommendedLeg => {
+const toPick = ({ c, a }: Researched, mode: PickMode): RecommendedLeg => {
   const price = c.leg.price!;
   const decimal = kalshiDecimal(price);
-  const basis = c.sharp ? "sharp" : "ai";
-  const p = c.sharp ? c.sharp.fair : a.probability;
-  const edge = c.sharp ? c.sharp.edge : p - price / 100 - kalshiFee(price / 100);
+  // AI mode always rests on the AI's estimate; the books' price is shown, never used.
+  const basis = mode === "sharp" && c.sharp ? "sharp" : "ai";
+  const p = basis === "sharp" ? c.sharp!.fair : a.probability;
+  const edge = basis === "sharp" ? c.sharp!.edge : p - price / 100 - kalshiFee(price / 100);
   return {
     leg: c.leg,
     league: c.league,
@@ -73,7 +79,7 @@ const toPick = ({ c, a }: Researched): RecommendedLeg => {
     reasoningStats: [
       { metric: "Kalshi implied probability", value: percent(price / 100), source: "Kalshi" },
       ...(c.sharp ? [{ metric: "Sharp fair probability", value: percent(c.sharp.fair), source: c.sharp.source }] : []),
-      { metric: "Edge after Kalshi fee", value: pts(edge), source: c.sharp ? "Vindle (vs sharp books)" : "Vindle (vs AI estimate)" },
+      { metric: "Edge after Kalshi fee", value: pts(edge), source: basis === "sharp" ? "Vindle (vs sharp books)" : "Vindle (vs AI estimate)" },
       { metric: "Kalshi volume", value: `$${Math.round(c.volume).toLocaleString("en-US")}`, source: "Kalshi" },
       ...(a.reasoningStats ?? []),
     ],
@@ -112,7 +118,7 @@ const spread = (picks: RecommendedLeg[]) => {
   });
 };
 
-const scan = async (scope: ScanScope, profile: VaultProfile | null): Promise<SoccerRecommendation> => {
+const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMode): Promise<SoccerRecommendation> => {
   const history = describeVaultProfile(profile);
 
   // 1. Every active fixture in scope, priced against the sharp books (free, no AI).
@@ -123,18 +129,19 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null): Promise<Soc
     return line ? { ...c, sharp: line } : c;
   });
 
-  // 2. Drop what can't be a pick before paying for research: thin markets, and matches the
-  //    books price where Kalshi isn't cheaper by enough.
+  // 2. Drop what can't be a pick before paying for research: thin markets, and (price-edge
+  //    mode only) matches the books price where Kalshi isn't cheaper by enough.
   const thin = candidates.filter((c) => !c.futures && c.volume < MIN_VOLUME).length;
   const liquid = candidates.filter((c) => c.futures || c.volume >= MIN_VOLUME);
-  const priced = liquid.filter((c) => !c.sharp || c.sharp.edge >= minSharpEdge(c.volume));
+  const priced = mode === "ai" ? liquid : liquid.filter((c) => !c.sharp || c.sharp.edge >= minSharpEdge(c.volume));
   const noPriceEdge = liquid.length - priced.length;
 
-  // 3. Research the best RESEARCH_BUDGET: biggest price edges first, then the deepest markets,
-  //    and no more than a few per league so one league can't use up the budget.
+  // 3. Research the best RESEARCH_BUDGET, no more than a few per league so one league can't
+  //    use up the budget. AI mode takes the most-traded matches (the best-covered games);
+  //    price-edge mode the biggest price gaps first.
   const perLeague = new Map<string, number>();
   const shortlist = [...priced]
-    .sort((a, b) => (b.sharp?.edge ?? -1) - (a.sharp?.edge ?? -1) || b.volume - a.volume)
+    .sort((a, b) => (mode === "sharp" ? (b.sharp?.edge ?? -1) - (a.sharp?.edge ?? -1) : 0) || b.volume - a.volume)
     .filter((c) => {
       const n = perLeague.get(c.league) ?? 0;
       if (n >= 4) return false;
@@ -146,8 +153,14 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null): Promise<Soc
   const screened = await screen(shortlist, history);
 
   const qualified = screened
-    .filter((r) => failReason({ price: r.c.leg.price, volume: r.c.volume, sharp: r.c.sharp, futures: r.c.futures }, r.a) === null)
-    .map(toPick)
+    .filter(
+      (r) =>
+        failReason(
+          { price: r.c.leg.price, volume: r.c.volume, sharp: mode === "sharp" ? r.c.sharp : undefined, futures: r.c.futures },
+          r.a
+        ) === null
+    )
+    .map((r) => toPick(r, mode))
     .sort(rank);
   const legs = spread(qualified).slice(0, MAX_PICKS);
 
@@ -158,7 +171,7 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null): Promise<Soc
     parlay = { probability, decimal, american: decimalToAmerican(decimal), ev: probability * decimal - 1 };
   }
 
-  const insufficient = screened.filter((r) => r.a.researched && !r.a.dataSufficient && !r.c.sharp).length;
+  const insufficient = screened.filter((r) => r.a.researched && !r.a.dataSufficient && (mode === "ai" || !r.c.sharp)).length;
   return {
     legs,
     parlay,
@@ -182,16 +195,17 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null): Promise<Soc
         thin ? `${thin} market${thin === 1 ? "" : "s"} under $${MIN_VOLUME.toLocaleString("en-US")} traded skipped as too thin.` : null,
         unresearched ? `${unresearched} weaker candidate${unresearched === 1 ? "" : "s"} not researched (budget ${RESEARCH_BUDGET} a scan).` : null,
         insufficient ? `${insufficient} had too little verifiable data to rate.` : null,
-        sharp.configured ? null : "Sharp-book pricing is OFF (ODDS_API_KEY not set): every pick rests on the AI alone.",
+        sharp.configured || mode === "ai" ? null : "Sharp-book pricing is OFF (ODDS_API_KEY not set): every pick rests on the AI alone.",
       ]
         .filter(Boolean)
         .join(" ") || null,
     model: BET_MODEL,
     scope,
+    mode,
   };
 };
 
-type Body = Partial<Record<keyof ScanScope | "history", unknown>>;
+type Body = Partial<Record<keyof ScanScope | "history" | "mode", unknown>>;
 
 /** The scope from the request body; anything missing falls back to every league, this week. */
 const readScope = (body: Body): ScanScope => {
@@ -210,11 +224,11 @@ const hash = (text: string) => {
   return (h >>> 0).toString(36);
 };
 
-/** One cache entry per league set, hour-rounded window, and Bet Vault profile. */
-const cacheKey = (scope: ScanScope, history: string) => {
+/** One cache entry per mode, league set, hour-rounded window, and Bet Vault profile. */
+const cacheKey = (scope: ScanScope, history: string, mode: PickMode) => {
   const hour = 60 * 60 * 1000;
   const range = scope.window === "futures" ? "" : `:${Math.floor(scope.from / hour)}`;
-  return `${CACHE_KEY}:v3:${scope.window}${range}:${[...scope.leagues].sort().join(",")}:${hash(history)}`;
+  return `${CACHE_KEY}:v4:${mode}:${scope.window}${range}:${[...scope.leagues].sort().join(",")}:${hash(history)}`;
 };
 
 /**
@@ -233,8 +247,9 @@ export async function POST(request: Request) {
   const fresh = new URL(request.url).searchParams.get("fresh") === "1";
   const body = ((await request.json().catch(() => null)) ?? {}) as Body;
   const scope = readScope(body);
+  const mode: PickMode = body.mode === "sharp" ? "sharp" : "ai";
   const profile = await loadProfile(body.history);
-  const key = cacheKey(scope, describeVaultProfile(profile));
+  const key = cacheKey(scope, describeVaultProfile(profile), mode);
   if (!fresh) {
     const cached = await redis(["GET", key]).catch(() => null);
     if (typeof cached?.result === "string") {
@@ -243,7 +258,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await scan(scope, profile);
+    const result = await scan(scope, profile, mode);
     // Cached even when empty: an empty scan costs as much as a full one.
     await Promise.all([
       redis(["SET", key, JSON.stringify(result), "EX", CACHE_SECONDS]).catch(() => null),
