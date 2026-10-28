@@ -548,7 +548,7 @@ export function Scanner({
                             </>
                           )}
                         </button>
-                        <span className={cn("text-[10px]", T.muted)}>Sonnet + API-Football · ~$0.05–0.15</span>
+                        <span className={cn("text-[10px]", T.muted)}>Sonnet + API-Football · roughly $0.10–0.25</span>
                         {deepState[l.leg.ticker]?.error && (
                           <span className="text-[11px] text-[#FF3B30]">{deepState[l.leg.ticker]!.error}</span>
                         )}
