@@ -9,8 +9,8 @@ import type { BetLeg, LegAnalysis } from "@/types/bet";
  * and the soccer scanner, whose finalists get a deep pass on DEEP_MODEL.
  */
 const MAX_TURNS = 3;
-/** The deep pass: more searches and more thinking, on the finalists only. */
-const DEEP = { webSearches: 5, effort: "medium" as const };
+/** The on-demand deep check: the stronger model, one more search than the screen, verified data. */
+const DEEP = { webSearches: 3, effort: "low" as const };
 
 const client = () => new Anthropic({ timeout: 90_000, maxRetries: 1 });
 
@@ -274,7 +274,7 @@ export const researchLeg = async (
       .filter(Boolean)
       .join("\n");
     const raw = await runTool<Omit<LegAnalysis, "researched">>(LEG_SYSTEM, SUBMIT_LEG, prompt, {
-      ...(options.deep ? DEEP : { webSearches: 3, effort: "low" as const }),
+      ...(options.deep ? DEEP : { webSearches: 2, effort: "low" as const }),
       deep: options.deep,
       sources,
     });

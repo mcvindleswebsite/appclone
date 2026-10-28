@@ -7,9 +7,8 @@
 export const BET_MODEL = "claude-haiku-5-5";
 
 /**
- * The Top Picks deep stage: only the shortlisted finalists of a scan are re-researched on
- * Sonnet, with more searches and API-Football data, so the extra cost stays on legs that
- * might actually be bet. Server-side fallback is on, so a policy decline re-runs on another
- * model instead of failing.
+ * The Top Picks deep check: run on demand from a pick's button (never automatically), on
+ * Sonnet with API-Football data, so the extra cost lands only on picks you'd actually bet.
+ * Server-side fallback is on, so a policy decline re-runs on another model instead of failing.
  */
 export const DEEP_MODEL = "claude-sonnet-5-5";

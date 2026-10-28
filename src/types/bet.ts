@@ -328,6 +328,10 @@ export interface RecommendedLeg {
   footballData: boolean;
   /** Full-Kelly fraction of bankroll at this price and probability; the client scales it. */
   kelly: number;
+  /** Kalshi dollar volume on the market, for liquidity rules. */
+  volume?: number;
+  /** Set when an on-demand deep check found the pick no longer clears the bar. */
+  vetoed?: string;
   /** Model's probability the leg wins. */
   modelProbability: number;
   /** What the Kalshi price implies. */

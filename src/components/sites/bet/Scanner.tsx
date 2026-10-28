@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightLeft, Hourglass, Loader2, Radar, RefreshCw, Vault } from "lucide-react";
+import { ArrowRightLeft, Hourglass, Loader2, Microscope, Radar, RefreshCw, Vault } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { adviseStake, type BankrollSettings } from "@/lib/bet/bankroll";
@@ -15,7 +15,7 @@ import {
   type TimeWindow,
 } from "@/lib/bet/scan-scope";
 import { cn } from "@/lib/utils";
-import type { BetLeg, RecommendedLeg, SoccerRecommendation, VaultProfile } from "@/types/bet";
+import type { BetLeg, LegAnalysis, RecommendedLeg, SoccerRecommendation, VaultProfile } from "@/types/bet";
 
 import { PriceGapList, type GapState } from "./PriceGaps";
 import { T } from "./theme";
@@ -178,6 +178,71 @@ export function Scanner({
   onLogSingles: (rec: SoccerRecommendation, stakes: number[]) => string;
 }) {
   const [mode, setMode] = useState<"singles" | "parlay">("singles");
+  /** On-demand deep checks in flight or failed, by ticker. */
+  const [deepState, setDeepState] = useState<Record<string, { busy: boolean; error?: string }>>({});
+
+  /** Re-researches one pick on the deep model with API-Football data, and folds the result into the scan. */
+  const deepCheck = async (l: RecommendedLeg) => {
+    const ticker = l.leg.ticker;
+    if (!ticker) return;
+    setDeepState((s) => ({ ...s, [ticker]: { busy: true } }));
+    try {
+      const response = await fetch("/api/recommendations/deep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bet-key": accessKey },
+        body: JSON.stringify({
+          leg: l.leg,
+          league: l.league,
+          kickoffTime: l.kickoffTime,
+          volume: l.volume ?? 0,
+          sharp: l.sharp,
+          futures: !!l.futures,
+          history: profile,
+        }),
+      });
+      const data = (await response.json()) as
+        | { analysis: LegAnalysis; footballData: boolean; failReason: string | null }
+        | { error: string };
+      if ("error" in data) {
+        setDeepState((s) => ({ ...s, [ticker]: { busy: false, error: data.error } }));
+        return;
+      }
+      const a = data.analysis;
+      setRec((prev) =>
+        prev && {
+          ...prev,
+          legs: prev.legs.map((x) => {
+            if (x.leg.ticker !== ticker) return x;
+            // Keep the line-value stats computed from prices; replace the research ones.
+            const priceStats = x.reasoningStats.filter(
+              (st) => st.source === "Kalshi" || st.source.startsWith("Vindle") || st.metric === "Sharp fair probability"
+            );
+            const p = x.basis === "sharp" ? x.modelProbability : a.probability;
+            const decimal = kalshiDecimal(x.leg.price ?? 50);
+            return {
+              ...x,
+              reasoningStats: [...priceStats, ...(a.reasoningStats ?? [])],
+              confidence: a.hitConfidence,
+              confidenceRating: a.hitConfidence,
+              reason: a.reason,
+              rating: a.rating,
+              opponentTier: a.opponentTier,
+              historyFlag: a.historyFlag ?? "",
+              aiProbability: a.probability,
+              modelProbability: p,
+              ev: p * decimal - 1,
+              deep: true,
+              footballData: data.footballData,
+              vetoed: data.failReason ?? undefined,
+            };
+          }),
+        }
+      );
+      setDeepState((s) => ({ ...s, [ticker]: { busy: false } }));
+    } catch {
+      setDeepState((s) => ({ ...s, [ticker]: { busy: false, error: "Couldn't reach the server." } }));
+    }
+  };
   const [rec, setRec] = useState<(SoccerRecommendation & { cached?: boolean }) | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,6 +297,8 @@ export function Scanner({
   // bankroll set, every single takes the flat stake below.
   let running = exposure;
   const singleStakes = shown.map((l) => {
+    // A pick the deep check vetoed gets no stake.
+    if (l.vetoed) return { amount: 0, advice: null };
     const advice = adviseStake(bankroll, l.modelProbability, kalshiDecimal(l.leg.price ?? 50), running);
     const amount = advice ? advice.stake : stake;
     running += amount;
@@ -252,8 +319,9 @@ export function Scanner({
             <h2 className="font-kalshi-bold text-lg">AI Soccer Scanner</h2>
             <p className={cn("text-sm", T.muted)}>
               Prices every upcoming {SCAN_LEAGUES.slice(0, -1).join(", ")}, and {SCAN_LEAGUES.at(-1)} match on Kalshi
-              against the sharp books, researches the ones Kalshi has cheap, and deep-checks the finalists with hard match
-              data. The AI can veto a price edge, never invent one. Season-long title races live in the Waiting Game.
+              against the sharp books for free, then spends AI research only on the 15 best candidates. Deep-check any
+              pick before you bet it. The AI can veto a price edge, never invent one. Season-long title races live in the
+              Waiting Game.
             </p>
           </div>
         </div>
@@ -280,7 +348,7 @@ export function Scanner({
         >
           {loading ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Analyzing all active fixtures across selected leagues…
+              <Loader2 className="size-4 animate-spin" /> Pricing every fixture, researching the best…
             </>
           ) : (
             <>
@@ -296,8 +364,8 @@ export function Scanner({
           <p className={cn("text-xs", T.muted)}>
             Full-market analysis: every active {frame === "futures" ? "title market" : "fixture"} in{" "}
             {leagues.size === SCAN_LEAGUES.length ? "all leagues" : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is
-            priced against the sharp books, screened 16 at a time against your Bet Vault record, then the finalists are
-            deep-checked. Bigger windows take up to a few minutes.
+            priced against the sharp books, then the 15 best candidates are researched against your Bet Vault record.
+            Usually under a minute.
           </p>
         )}
         {error && <p className="text-xs text-[#FF3B30]">{error}</p>}
@@ -452,7 +520,40 @@ export function Scanner({
                         ))}
                       </ul>
                     )}
-                    {l.historyFlag && <p className="pl-7 text-[11px] text-[#F5F7F4]/85"><span className="font-kalshi-bold text-white">Your vault:</span> {l.historyFlag}</p>}
+                    {l.historyFlag && (
+                      <p className="pl-7 text-[11px] text-[#F5F7F4]/85">
+                        <span className="font-kalshi-bold text-white">Your vault:</span> {l.historyFlag}
+                      </p>
+                    )}
+                    {l.vetoed && (
+                      <p className="pl-7 text-xs text-[#FF3B30]">
+                        ▲ Deep check vetoed this pick: {l.vetoed}. It&apos;s left out of the stakes below.
+                      </p>
+                    )}
+                    {!l.deep && l.leg.ticker && (
+                      <div className="flex flex-wrap items-center gap-2 pl-7">
+                        <button
+                          type="button"
+                          disabled={disabled || deepState[l.leg.ticker]?.busy}
+                          onClick={() => void deepCheck(l)}
+                          className="flex min-h-8 items-center gap-1.5 rounded-lg bg-[#1E2638] px-2.5 text-[11px] font-semibold hover:bg-(--accent-deep) disabled:opacity-50"
+                        >
+                          {deepState[l.leg.ticker]?.busy ? (
+                            <>
+                              <Loader2 className="size-3 animate-spin" /> Deep checking…
+                            </>
+                          ) : (
+                            <>
+                              <Microscope className="size-3" /> Deep check before betting
+                            </>
+                          )}
+                        </button>
+                        <span className={cn("text-[10px]", T.muted)}>Sonnet + API-Football · ~$0.05–0.15</span>
+                        {deepState[l.leg.ticker]?.error && (
+                          <span className="text-[11px] text-[#FF3B30]">{deepState[l.leg.ticker]!.error}</span>
+                        )}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ol>
