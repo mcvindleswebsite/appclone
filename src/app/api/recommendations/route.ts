@@ -8,13 +8,16 @@ import { redis } from "@/lib/bet/store";
 import type { RecommendedLeg, SoccerRecommendation } from "@/types/bet";
 
 export const dynamic = "force-dynamic";
-// A dozen legs researched in parallel; about as long as one.
-export const maxDuration = 120;
+// Every fixture in scope is researched, in parallel waves; the Hobby plan's ceiling.
+export const maxDuration = 300;
 
 const PARLAY_LEGS = 5;
-/** Legs sent to AI research per scan: enough to find 5 that clear the bar, few enough to stay cheap. */
-const RESEARCH_BUDGET = 12;
-const MAX_PER_LEAGUE = 3;
+/** Research calls in flight at once: wide enough to cover a month of fixtures, narrow enough for API rate limits. */
+const CONCURRENCY = 16;
+/** No new research starts after this, so in-flight calls can finish inside maxDuration. */
+const START_DEADLINE_MS = 180_000;
+/** Any research still running at this point is dropped and the scan returns what it has. */
+const HARD_DEADLINE_MS = 275_000;
 /** A recommended match leg must be at least a coin flip in the model's view. */
 const MIN_PROBABILITY = 0.5;
 /** Title races rarely have a coin-flip favorite, so a futures leg only needs a real chance. */
@@ -22,27 +25,36 @@ const MIN_FUTURES_PROBABILITY = 0.25;
 const CACHE_KEY = "vindle_soccer_recs";
 const CACHE_SECONDS = 30 * 60;
 
+type Researched = { c: SoccerCandidate; a: Awaited<ReturnType<typeof researchLeg>> };
+
 /**
- * Picks which fixtures get researched: the most-traded favorites (deep markets price
- * best), spread across leagues so one league can't fill the ticket.
+ * Researches every candidate, CONCURRENCY at a time, most-traded first (deep markets price
+ * best, so they're the ones worth guaranteeing if a huge window runs out of time).
  */
-const shortlist = (candidates: SoccerCandidate[]) => {
-  const perLeague = new Map<string, number>();
-  return [...candidates]
-    .sort((a, b) => b.volume - a.volume)
-    .filter((c) => {
-      const n = perLeague.get(c.league) ?? 0;
-      if (n >= MAX_PER_LEAGUE) return false;
-      perLeague.set(c.league, n + 1);
-      return true;
-    })
-    .slice(0, RESEARCH_BUDGET);
+const researchAll = async (candidates: SoccerCandidate[]) => {
+  const started = Date.now();
+  const queue = [...candidates].sort((a, b) => b.volume - a.volume);
+  const done: Researched[] = [];
+  const worker = async () => {
+    for (let c = queue.shift(); c; c = queue.shift()) {
+      if (Date.now() - started > START_DEADLINE_MS) continue;
+      done.push({ c, a: await researchLeg(c.leg) });
+    }
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cutoff = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, HARD_DEADLINE_MS);
+  });
+  await Promise.race([Promise.all(Array.from({ length: CONCURRENCY }, worker)), cutoff]);
+  clearTimeout(timer);
+  // Calls still running at the cutoff count as unresearched; the snapshot ignores their late results.
+  const researched = [...done];
+  return { researched, skipped: candidates.length - researched.length };
 };
 
 const scan = async (scope: ScanScope): Promise<SoccerRecommendation> => {
   const candidates = await soccerCandidates(scope);
-  const picked = shortlist(candidates);
-  const researched = await Promise.all(picked.map(async (c) => ({ c, a: await researchLeg(c.leg) })));
+  const { researched, skipped } = await researchAll(candidates);
 
   const scored: RecommendedLeg[] = researched.flatMap(({ c, a }) => {
     const price = c.leg.price;
@@ -87,12 +99,24 @@ const scan = async (scope: ScanScope): Promise<SoccerRecommendation> => {
   return {
     legs,
     parlay,
-    scanned: { fixtures: candidates.length, researched: researched.filter((r) => r.a.researched).length, qualified: qualified.length },
+    scanned: {
+      fixtures: candidates.length,
+      researched: researched.filter((r) => r.a.researched).length,
+      qualified: qualified.length,
+      skipped,
+    },
     generatedAt: new Date().toISOString(),
     note:
-      legs.length < PARLAY_LEGS
-        ? `Only ${legs.length} leg${legs.length === 1 ? "" : "s"} cleared the bar (+EV, ≥${Math.round(minProbability * 100)}% to win, no bum picks) — the scanner doesn't pad a ticket with -EV legs.`
-        : null,
+      [
+        legs.length < PARLAY_LEGS
+          ? `Only ${legs.length} leg${legs.length === 1 ? "" : "s"} cleared the bar (+EV, ≥${Math.round(minProbability * 100)}% to win, no bum picks) — the scanner doesn't pad a ticket with -EV legs.`
+          : null,
+        skipped
+          ? `${skipped} of ${candidates.length} fixtures ran out of research time (the least-traded ones) — narrow the leagues or timeframe to cover them all.`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ") || null,
     model: BET_MODEL,
     scope,
   };
@@ -120,7 +144,7 @@ const cacheKey = (scope: ScanScope) => {
  * Scans soccer markets on Kalshi in the requested leagues and time window (body: ScanScope)
  * and returns the best +EV legs as a 5-leg ticket.
  * Results are cached for 30 minutes (when Upstash is connected) because each scan runs a
- * dozen AI research calls; `?fresh=1` forces a new scan.
+ * research call for every fixture in scope; `?fresh=1` forces a new scan.
  */
 export async function POST(request: Request) {
   const denied = checkAccess(request);

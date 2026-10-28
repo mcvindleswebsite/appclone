@@ -392,12 +392,18 @@ const HOUR = 60 * 60 * 1000;
 /** The longest match window a scan looks ahead. */
 const MAX_MATCH_DAYS = 35;
 
+/** Above this a favorite can't clear Kalshi's fee with any realistic edge. */
+const MAX_ASK = 92;
+/** Wider than this and the quote isn't a real price. */
+const MAX_SPREAD = 5;
+/** Title contenders per league researched in the Waiting Game. */
+const FUTURES_CONTENDERS = 3;
+
 /**
- * Open markets worth researching, with no AI involved. For a match window: each upcoming
- * match's favorite (a team, never the draw) priced 40–85¢ — a real chance to win without
- * being a near-certainty that pays nothing — with a live bid and a tight spread, kicking off
- * inside the scope's range. For the Waiting Game: each league's title favorite priced
- * 15–85¢, since a season-long market rarely has a team above 50¢.
+ * Every open market worth researching, with no AI involved. For a match window: every
+ * fixture kicking off inside the scope's range, taking its favorite (a team, never the draw)
+ * when it has a live two-sided quote and isn't a near-lock. For the Waiting Game: each
+ * league's top title contenders priced 10¢ or more.
  */
 export const soccerCandidates = async (scope: ScanScope): Promise<SoccerCandidate[]> => {
   const now = Date.now();
@@ -413,30 +419,31 @@ export const soccerCandidates = async (scope: ScanScope): Promise<SoccerCandidat
       ).catch(() => null);
       return (data?.events ?? []).flatMap((event): SoccerCandidate[] => {
         const teams = (event.markets ?? []).filter((m) => m.status === "active" && !/^tie/i.test(m.yes_sub_title ?? m.title));
-        const favorite = teams.sort((a, b) => (cents(b.yes_ask_dollars) ?? 0) - (cents(a.yes_ask_dollars) ?? 0))[0];
-        if (!favorite) return [];
-        const ask = cents(favorite.yes_ask_dollars);
-        const bid = cents(favorite.yes_bid_dollars);
-        const settles = Date.parse(favorite.expected_expiration_time ?? "");
-        if (!Number.isFinite(settles) || ask === null || bid === null) return [];
-        if (futures) {
-          if (settles < now || ask < 15 || ask > 85 || ask - bid > 4) return [];
-        } else {
-          const kickoff = settles - 2 * HOUR;
-          if (kickoff < from || kickoff > to) return [];
-          if (ask < 40 || ask > 85 || ask - bid > 3) return [];
-        }
-        const volume = Number(favorite.volume_fp ?? 0);
-        return [
-          {
-            leg: { ...toLeg(favorite, event, "yes"), sport: "Soccer" },
-            league: name,
-            eventTicker: event.event_ticker,
-            settlesAt: new Date(settles).toISOString(),
-            volume: Number.isFinite(volume) ? volume : 0,
-            ...(futures ? { futures: true } : {}),
-          },
-        ];
+        const ranked = teams.sort((a, b) => (cents(b.yes_ask_dollars) ?? 0) - (cents(a.yes_ask_dollars) ?? 0));
+        return ranked.slice(0, futures ? FUTURES_CONTENDERS : 1).flatMap((market): SoccerCandidate[] => {
+          const ask = cents(market.yes_ask_dollars);
+          const bid = cents(market.yes_bid_dollars);
+          const settles = Date.parse(market.expected_expiration_time ?? "");
+          if (!Number.isFinite(settles) || ask === null || bid === null || !bid) return [];
+          if (ask > MAX_ASK || ask - bid > MAX_SPREAD) return [];
+          if (futures) {
+            if (settles < now || ask < 10) return [];
+          } else {
+            const kickoff = settles - 2 * HOUR;
+            if (kickoff < from || kickoff > to) return [];
+          }
+          const volume = Number(market.volume_fp ?? 0);
+          return [
+            {
+              leg: { ...toLeg(market, event, "yes"), sport: "Soccer" },
+              league: name,
+              eventTicker: event.event_ticker,
+              settlesAt: new Date(settles).toISOString(),
+              volume: Number.isFinite(volume) ? volume : 0,
+              ...(futures ? { futures: true } : {}),
+            },
+          ];
+        });
       });
     })
   );

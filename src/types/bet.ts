@@ -242,7 +242,8 @@ export interface SoccerRecommendation {
     american: number;
     ev: number;
   } | null;
-  scanned: { fixtures: number; researched: number; qualified: number };
+  /** `skipped`: fixtures in scope that ran out of research time (least-traded first). */
+  scanned: { fixtures: number; researched: number; qualified: number; skipped?: number };
   generatedAt: string;
   /** Present when fewer than 5 legs cleared the bar; the scanner never pads with -EV legs. */
   note: string | null;

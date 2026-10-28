@@ -244,7 +244,7 @@ export function Scanner({
         >
           {loading ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Scanning fixtures and researching legs…
+              <Loader2 className="size-4 animate-spin" /> Analyzing all active fixtures across selected leagues…
             </>
           ) : (
             <>
@@ -256,7 +256,11 @@ export function Scanner({
         {(!accessKey || keyBroken) && (
           <p className="text-xs text-[#FF3B30]">The scanner needs a working access key (key icon, top right).</p>
         )}
-        {loading && <p className={cn("text-xs", T.muted)}>Researching about a dozen matches in parallel — usually under a minute.</p>}
+        {loading && (
+          <p className={cn("text-xs", T.muted)}>
+            Full-market analysis: every active {frame === "futures" ? "title market" : "fixture"} in {leagues.size === SCAN_LEAGUES.length ? "all leagues" : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is researched, 16 at a time — bigger windows take up to a few minutes.
+          </p>
+        )}
         {error && <p className="text-xs text-[#FF3B30]">{error}</p>}
         {frame === "futures" && leagues.has("Saudi Pro League") && (
           <p className={cn("text-[11px]", T.muted)}>
@@ -272,6 +276,7 @@ export function Scanner({
               <p className={T.label}>
                 {shown.length}-Leg Ticket · {windowLabel} · scanned {rec.scanned.fixtures}{" "}
                 {rec.scope?.window === "futures" ? "markets" : "fixtures"}, researched {rec.scanned.researched}
+                {rec.scanned.skipped ? ` (${rec.scanned.skipped} out of time)` : ""}
               </p>
               <button
                 type="button"
