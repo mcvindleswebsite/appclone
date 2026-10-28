@@ -14,7 +14,7 @@ import {
   type TimeWindow,
 } from "@/lib/bet/scan-scope";
 import { cn } from "@/lib/utils";
-import type { RecommendedLeg, SoccerRecommendation } from "@/types/bet";
+import type { RecommendedLeg, SoccerRecommendation, VaultProfile } from "@/types/bet";
 
 import { T } from "./theme";
 
@@ -145,11 +145,14 @@ function LeaguePicker({ value, onChange }: { value: Set<ScanLeague>; onChange: (
 export function Scanner({
   accessKey,
   keyBroken,
+  profile,
   onImport,
   onLog,
 }: {
   accessKey: string;
   keyBroken: boolean;
+  /** Bet Vault summary sent with each scan, so picks are weighed against your own record. */
+  profile: VaultProfile;
   /** Moves the recommended legs into the evaluator. */
   onImport: (rec: SoccerRecommendation) => void;
   /** Saves the recommended ticket to the vault with a stake; returns a status line. */
@@ -190,7 +193,7 @@ export function Scanner({
       const response = await fetch(`/api/recommendations${fresh ? "?fresh=1" : ""}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-bet-key": accessKey },
-        body: JSON.stringify({ window: frame, ...windowRange(frame, at), leagues: [...leagues] }),
+        body: JSON.stringify({ window: frame, ...windowRange(frame, at), leagues: [...leagues], history: profile }),
       });
       const data = (await response.json()) as SoccerRecommendation | { error: string };
       if ("error" in data) setError(data.error);
@@ -258,7 +261,7 @@ export function Scanner({
         )}
         {loading && (
           <p className={cn("text-xs", T.muted)}>
-            Full-market analysis: every active {frame === "futures" ? "title market" : "fixture"} in {leagues.size === SCAN_LEAGUES.length ? "all leagues" : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is researched, 16 at a time — bigger windows take up to a few minutes.
+            Full-market analysis: every active {frame === "futures" ? "title market" : "fixture"} in {leagues.size === SCAN_LEAGUES.length ? "all leagues" : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is researched, 16 at a time, against your Bet Vault record — only legs backed by verifiable stats make the ticket. Bigger windows take up to a few minutes.
           </p>
         )}
         {error && <p className="text-xs text-[#FF3B30]">{error}</p>}
@@ -336,12 +339,34 @@ export function Scanner({
                       {l.opponentTier.playUpSpot && <span className={T.yes}>Play-up spot</span>}
                     </div>
                     <p className="pl-7 text-xs text-[#F5F7F4]/85">{l.reason}</p>
+                    {(l.reasoningStats ?? []).length > 0 && (
+                      <ul className="flex flex-wrap gap-1 pl-7">
+                        {l.reasoningStats.map((s) => (
+                          <li
+                            key={`${s.metric}:${s.value}`}
+                            title={s.source}
+                            className="rounded-md border border-[#1E2638] bg-[#121824] px-1.5 py-0.5 text-[10px] text-[#F5F7F4]/70"
+                          >
+                            {s.metric}: <span className="font-kalshi-bold text-white">{s.value}</span>
+                            <span className="text-[#F5F7F4]/40"> · {s.source}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {l.historyFlag && <p className="pl-7 text-[11px] text-[#F5F7F4]/85"><span className="font-kalshi-bold text-white">Your vault:</span> {l.historyFlag}</p>}
                   </li>
                 ))}
               </ol>
             )}
 
             {rec.note && <p className={cn("text-xs", T.muted)}>{rec.note}</p>}
+            {rec.history && (
+              <p className={cn("text-[11px]", T.muted)}>
+                {rec.history.applied
+                  ? `Weighed against your Bet Vault (${rec.history.settled} settled picks): confidence and flags reflect your record by market type and league.`
+                  : "No settled Bet Vault picks yet — rated on the fixtures alone."}
+              </p>
+            )}
             {stale && shown.length > 0 && (
               <p className={cn("text-[11px]", T.muted)}>
                 Filtered from the last scan ({rec.legs.length} legs) — Generate to scan {windowLabel} in these leagues.

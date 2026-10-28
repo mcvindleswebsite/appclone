@@ -170,7 +170,7 @@ export async function POST(request: Request) {
   const slip = body.slip;
 
   try {
-    const [legs, history] = await Promise.all([Promise.all(slip.legs.map(researchLeg)), loadHistory(body.history)]);
+    const [legs, history] = await Promise.all([Promise.all(slip.legs.map((leg) => researchLeg(leg))), loadHistory(body.history)]);
     if (legs.every((l) => !l.researched)) {
       return Response.json({ error: "Research failed for every leg — try again" }, { status: 502 });
     }

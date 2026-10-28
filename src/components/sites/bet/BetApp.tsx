@@ -29,6 +29,7 @@ import {
   pushRemote,
   saveLocal,
   syncErrorMessage,
+  vaultProfile,
   type SyncStatus,
 } from "@/lib/bet/history";
 import { pickOutcome, settleKalshi, tickerLink } from "@/lib/bet/kalshi-link";
@@ -186,6 +187,8 @@ export function BetApp() {
   /** Whether sharp-book lines are available (ODDS_API_KEY set on the server). */
   const [booksOn, setBooksOn] = useState<boolean | null>(null);
   const notes = memoryNotes(buildInsights(records), slip);
+  /** The Bet Vault summary sent with every Top Picks scan. */
+  const profile = useMemo(() => vaultProfile(records), [records]);
 
   /** Writes records locally and, when a key is set, mirrors the changed ones to the API store. */
   const commit = useCallback(
@@ -651,7 +654,13 @@ export function BetApp() {
 
       <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
         {tab === "scanner" ? (
-          <Scanner accessKey={accessKey} keyBroken={keyBroken} onImport={importRecommendation} onLog={logRecommendation} />
+          <Scanner
+            accessKey={accessKey}
+            keyBroken={keyBroken}
+            profile={profile}
+            onImport={importRecommendation}
+            onLog={logRecommendation}
+          />
         ) : tab === "edge" ? (
           <EdgeLab records={records} calibration={fit} />
         ) : tab === "vault" ? (

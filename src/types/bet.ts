@@ -78,8 +78,42 @@ export interface LegAnalysis {
     /** Underdog that systematically raises its level against top-tier opposition. */
     playUpSpot: boolean;
   };
+  /** False when the research couldn't find enough current, verifiable data to rate the leg. */
+  dataSufficient?: boolean;
+  /** The concrete stats the rating rests on, each with where it came from. */
+  reasoningStats?: ReasoningStat[];
+  /** How the bettor's own Bet Vault record bears on this leg; empty when it doesn't. */
+  historyFlag?: string;
   /** False when research for this leg failed; the other fields are placeholders. */
   researched: boolean;
+}
+
+export interface ReasoningStat {
+  /** e.g. "Head-to-head, last 5", "Kalshi implied probability". */
+  metric: string;
+  /** e.g. "W3 D1 L1", "62%". */
+  value: string;
+  /** Publication or data source and date, or "Kalshi" for market data. */
+  source: string;
+}
+
+/** A structured summary of the Bet Vault, computed in code and sent with each research call. */
+export interface VaultProfile {
+  picks: number;
+  settled: number;
+  wins: number;
+  losses: number;
+  winRate: number | null;
+  /** Units won per unit staked over settled picks with odds. */
+  roi: number | null;
+  /** Leagues the bettor backs most, by legs logged. */
+  leagues: { league: string; legs: number; hit: number; settled: number }[];
+  /** Ticket-level results by market type (single legs by market, parlays by size). */
+  byMarketType: { type: string; tickets: number; wins: number; losses: number; roi: number | null }[];
+  /** Leg hit rates by market type, across every settled leg. */
+  legsByType: { type: string; hit: number; settled: number }[];
+  /** Plain-language patterns from past results, e.g. busted parlays. Computed, not AI. */
+  patterns: string[];
 }
 
 export interface Correlation {
@@ -218,6 +252,18 @@ export interface RecommendedLeg {
   settlesAt: string;
   /** A season-long title market (the Waiting Game) rather than a single match. */
   futures?: boolean;
+  /* The fixed pick record. Fixture facts come from Kalshi, never from the model. */
+  matchName: string;
+  /** ISO kickoff (match legs) or expected settlement (futures). */
+  kickoffTime: string;
+  pick: string;
+  odds: { kalshiCents: number; american: number };
+  /** Stats the model cited plus the market's own line value, computed in code. */
+  reasoningStats: ReasoningStat[];
+  /** 1-10; the model's confidence in its probability. */
+  confidenceRating: number;
+  /** How the bettor's Bet Vault record bears on this pick; empty when it doesn't. */
+  historyFlag: string;
   /** Model's probability the leg wins. */
   modelProbability: number;
   /** What the Kalshi price implies. */
@@ -243,7 +289,9 @@ export interface SoccerRecommendation {
     ev: number;
   } | null;
   /** `skipped`: fixtures in scope that ran out of research time (least-traded first). */
-  scanned: { fixtures: number; researched: number; qualified: number; skipped?: number };
+  scanned: { fixtures: number; researched: number; qualified: number; skipped?: number; insufficient?: number };
+  /** Whether the bettor's Bet Vault history was applied, and how many settled picks it held. */
+  history?: { applied: boolean; settled: number };
   generatedAt: string;
   /** Present when fewer than 5 legs cleared the bar; the scanner never pads with -EV legs. */
   note: string | null;

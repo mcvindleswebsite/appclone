@@ -39,6 +39,16 @@ Rate the leg:
 
 reason is one sentence. For a BUM PICK it must name the specific reason (e.g. "Cleared 24.5 in only 3 of his last 10 and faces the league's #2 defense vs PGs." or "Trap game: won only 2 of 7 against bottom-half low blocks this season despite sitting 2nd.").
 
+Grounding rules — these override everything above:
+- Every number you report (records, hit rates, ranks, injuries, head-to-head results) must come from a search result you read in this research. Never fill a gap from memory, never estimate a stat, and never invent a player, injury, or result. When a stat isn't found, report it as unknown (0 games, rank 0, an empty note) rather than guessing.
+- reasoningStats lists the concrete metrics your rating rests on — at least two from your research, such as the head-to-head record, recent form, league position, goals for/against, key player status, or what other books price the leg at. Each has the metric, its value, and its source (publication or site, with the date when shown). Don't list the Kalshi price; the app adds the line value itself.
+- If you can't find at least two current, verifiable stats about this fixture — or what you found is stale, contradictory, or about a different match — set dataSufficient to false, rating NEUTRAL, hitConfidence 1-3, probability equal to the market price (or 0.5 with no price), and say in reason what was missing. An honest "insufficient data" is always better than a confident guess.
+- hitConfidence is strict: 8-10 only when several independent, recent sources agree; 4-7 for solid but partial evidence; 1-3 for thin evidence.
+
+The bettor's Bet Vault record may be given in <bettor_history>. It describes the bettor's past results, not the teams, so it is never evidence about this fixture and must not change your probability. Use it only to:
+- lower hitConfidence for a market type, league, or price range where the bettor has a proven losing record, and raise it at most one point where they have a proven winning one, when your research independently supports the leg;
+- set historyFlag to one sentence naming the specific pattern that applies (e.g. "Your 4+ leg parlays are 1-9; this favorite at 81¢ fits the 75¢+ legs you hit only 58% of."). Leave historyFlag empty when no pattern applies or no history is given.
+
 When done, call submit_leg exactly once.`;
 
 const SUBMIT_LEG: Anthropic.Beta.BetaTool = {
@@ -103,8 +113,42 @@ const SUBMIT_LEG: Anthropic.Beta.BetaTool = {
         required: ["note", "trapGame", "playUpSpot"],
         additionalProperties: false,
       },
+      dataSufficient: {
+        type: "boolean",
+        description: "False when fewer than two current, verifiable stats about this fixture were found.",
+      },
+      reasoningStats: {
+        type: "array",
+        description: "The concrete metrics the rating rests on, each from a search result read in this research.",
+        items: {
+          type: "object",
+          properties: {
+            metric: { type: "string", description: "e.g. 'Head-to-head, last 5 meetings'." },
+            value: { type: "string", description: "e.g. 'W3 D1 L1'." },
+            source: { type: "string", description: "Publication or site, with the date when shown." },
+          },
+          required: ["metric", "value", "source"],
+          additionalProperties: false,
+        },
+      },
+      historyFlag: {
+        type: "string",
+        description: "One sentence on a Bet Vault pattern that applies to this leg; empty when none does.",
+      },
     },
-    required: ["rating", "probability", "hitConfidence", "reason", "last10", "matchup", "injuries", "opponentTier"],
+    required: [
+      "rating",
+      "probability",
+      "hitConfidence",
+      "reason",
+      "last10",
+      "matchup",
+      "injuries",
+      "opponentTier",
+      "dataSufficient",
+      "reasoningStats",
+      "historyFlag",
+    ],
     additionalProperties: false,
   },
 };
@@ -125,12 +169,20 @@ export const describeLeg = (leg: BetLeg, n?: number) =>
     .filter(Boolean)
     .join("\n");
 
-/** Runs one tool-terminated research loop and returns the tool's input, or null. */
+/**
+ * Runs one tool-terminated research loop and returns the tool's input, or null. Each call
+ * is a fresh, stateless request: the system prompt and the single user prompt are all the
+ * model sees, plus its own tool turns within this loop. No sampling parameters are sent —
+ * Claude Haiku 5.5 rejects a non-default temperature, and API version 2026-10-21 rejects
+ * temperature/top_p/top_k on every model — so consistency comes from low effort, a strict
+ * tool schema, and the grounding rules instead. `sources` collects the URLs of every web
+ * search result the model read.
+ */
 export const runTool = async <T,>(
   system: string,
   tool: Anthropic.Beta.BetaTool,
   prompt: string,
-  options: { webSearches: number; effort: "low" | "medium" }
+  options: { webSearches: number; effort: "low" | "medium"; sources?: string[] }
 ): Promise<T | null> => {
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: prompt }];
   const tools: Anthropic.Beta.BetaToolUnion[] = [tool];
@@ -146,6 +198,13 @@ export const runTool = async <T,>(
       messages,
     });
     if (response.stop_reason === "refusal") return null;
+
+    for (const block of response.content) {
+      // A search error comes back as an object, a success as a list of results.
+      if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
+        options.sources?.push(...block.content.map((r) => r.url));
+      }
+    }
 
     const call = response.content.find(
       (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use" && b.name === tool.name
@@ -170,23 +229,65 @@ const placeholder = (leg: BetLeg): LegAnalysis => ({
   matchup: { rank: 0, outOf: 0, label: "No data" },
   injuries: [],
   opponentTier: { note: "", trapGame: false, playUpSpot: false },
+  dataSufficient: false,
+  reasoningStats: [],
+  historyFlag: "",
   researched: false,
 });
 
-export const researchLeg = async (leg: BetLeg): Promise<LegAnalysis> => {
+/** Fewer cited stats than this and the leg is treated as insufficient data. */
+const MIN_STATS = 2;
+/** Confidence ceiling for a leg the research couldn't ground. */
+const THIN_CONFIDENCE = 3;
+
+/**
+ * Researches one leg in a fresh, stateless call. `history` is the bettor's Bet Vault profile
+ * (from describeVaultProfile), passed as structured context on every call rather than kept in
+ * any conversation.
+ */
+export const researchLeg = async (leg: BetLeg, history?: string): Promise<LegAnalysis> => {
   try {
-    const raw = await runTool<Omit<LegAnalysis, "researched">>(LEG_SYSTEM, SUBMIT_LEG, `${describeLeg(leg)}\nToday's date: ${new Date().toDateString()}`, {
+    const sources: string[] = [];
+    const prompt = [
+      describeLeg(leg),
+      `Today's date: ${new Date().toDateString()}`,
+      history ? `\n<bettor_history>\n${history}\n</bettor_history>` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const raw = await runTool<Omit<LegAnalysis, "researched">>(LEG_SYSTEM, SUBMIT_LEG, prompt, {
       webSearches: 3,
       effort: "low",
+      sources,
     });
     if (!raw) return placeholder(leg);
     const games = int(raw.last10.games, 0, 20);
     const outOf = int(raw.matchup.outOf, 1, 64);
+    const reasoningStats = (raw.reasoningStats ?? [])
+      .filter((s) => s.metric.trim() && s.value.trim())
+      .slice(0, 8)
+      .map((s) => ({ metric: s.metric.slice(0, 80), value: s.value.slice(0, 80), source: s.source.slice(0, 80) }));
+    // Grounding is checked here, not taken on trust: no search results read, or too few
+    // cited stats, means the model had nothing verifiable to rate the leg on.
+    const grounded = raw.dataSufficient !== false && sources.length > 0 && reasoningStats.length >= MIN_STATS;
+    if (!grounded) {
+      return {
+        ...placeholder(leg),
+        reason: `Insufficient data: ${raw.dataSufficient === false ? raw.reason : "too few verifiable stats were found for this fixture"} — rated on price alone.`,
+        hitConfidence: Math.min(THIN_CONFIDENCE, int(raw.hitConfidence, 1, 10)),
+        reasoningStats,
+        historyFlag: raw.historyFlag ?? "",
+        researched: true,
+      };
+    }
     return {
       // A favorite in a proven trap game is a bum pick however good its overall record.
       rating: raw.opponentTier.trapGame ? "BUM PICK" : raw.rating,
       probability: clamp(raw.probability, 0.01, 0.99),
       hitConfidence: int(raw.hitConfidence, 1, 10),
+      dataSufficient: true,
+      reasoningStats,
+      historyFlag: (raw.historyFlag ?? "").slice(0, 300),
       reason: raw.reason,
       last10: { ...raw.last10, games, hits: int(raw.last10.hits, 0, games) },
       matchup: { ...raw.matchup, outOf, rank: int(raw.matchup.rank, 1, outOf) },
