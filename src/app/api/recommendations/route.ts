@@ -11,6 +11,8 @@ import {
   marketWinProbability,
   MISMATCH,
   mismatchFailReason,
+  OPINION,
+  opinionFailReason,
   MIN_VOLUME,
   minSharpEdge,
   SAFE_MIN_PROBABILITY,
@@ -68,6 +70,14 @@ const STRATEGIES: Record<
     probability: (r: Researched) => number;
   }
 > = {
+  opinion: {
+    minVolume: OPINION.minVolume,
+    eligible: (c) => winChance(c) >= OPINION.minMarket,
+    // Research the clearest favorites first, so the budget goes where the AI is likeliest to agree.
+    order: (a, b) => winChance(b) - winChance(a),
+    fails: ({ c, a }) => opinionFailReason({ price: c.leg.price, volume: c.volume, futures: c.futures }, a),
+    probability: ({ a }) => a.probability,
+  },
   mismatch: {
     minVolume: MISMATCH.minVolume,
     eligible: (c) => !c.futures && !!c.table && isMismatch(c.table) && winChance(c) >= MISMATCH.minProbability,
@@ -150,7 +160,8 @@ const toPick = (r: Researched, mode: PickMode): RecommendedLeg => {
   const { c, a } = r;
   const price = c.leg.price!;
   const decimal = kalshiDecimal(price);
-  const basis = mode === "sharp" && !c.sharp ? "ai" : mode;
+  // AI Picks are tracked with the other AI-judged picks.
+  const basis = mode === "opinion" || (mode === "sharp" && !c.sharp) ? "ai" : mode;
   const p = STRATEGIES[mode].probability(r);
   const edge = basis === "sharp" ? c.sharp!.edge : p - price / 100 - kalshiFee(price / 100);
   const opponent = teamsOf(c.leg.matchup).find((t) => t !== c.leg.pick) ?? "opponent";
@@ -208,6 +219,8 @@ const rank = (mode: PickMode) => (a: RecommendedLeg, b: RecommendedLeg) => {
     return b.table.opponent.rank - b.table.pick.rank - (a.table.opponent.rank - a.table.pick.rank) || b.modelProbability - a.modelProbability;
   }
   if (mode === "safe") return b.modelProbability - a.modelProbability || b.confidenceRating - a.confidenceRating;
+  // AI Picks: the AI's surest calls first — its win probability weighted by its confidence.
+  if (mode === "opinion") return b.modelProbability * b.confidenceRating - a.modelProbability * a.confidenceRating;
   // Sharp-anchored edges are measured against the market's best price; they rank first.
   return Number(b.basis === "sharp") - Number(a.basis === "sharp") || edgeOf(b) - edgeOf(a) || b.confidenceRating - a.confidenceRating;
 };
@@ -275,9 +288,12 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
   }
 
   const insufficient = screened.filter((r) => r.a.researched && !r.a.dataSufficient && (mode === "ai" || !r.c.sharp)).length;
+  // Every research call failing at once is the API, not the matches: usually spent credits.
+  const aiFailed = screened.length > 0 && screened.every((r) => !r.a.researched);
+  const tradable = candidates.filter((c) => c.volume >= MIN_VOLUME).length;
   const valueNote =
-    (mode === "safe" || mode === "mismatch") && legs.length
-      ? `${mode === "safe" ? "Safest Wins" : "Mismatches"} picks on the matchup, not the price: these average ${pts(
+    (mode === "safe" || mode === "mismatch" || mode === "opinion") && legs.length
+      ? `${{ safe: "Safest Wins", mismatch: "Mismatches", opinion: "AI Picks" }[mode]} picks on who wins, not the price: these average ${pts(
           legs.reduce((s, l) => s + l.ev, 0) / legs.length
         ).replace(" pts", "%")} EV each at Kalshi's prices, and a ${legs.length}-leg parlay of them hits about ${percent(
           legs.reduce((acc, l) => acc * l.modelProbability, 1)
@@ -301,10 +317,18 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
     generatedAt: new Date().toISOString(),
     note:
       [
-        legs.length === 0
+        aiFailed
+          ? `AI research failed for all ${screened.length} matches — the Anthropic API refused the calls. Check your credits at console.anthropic.com, then Rescan.`
+          : null,
+        candidates.length < 10
+          ? `Kalshi only lists ${candidates.length} soccer match${candidates.length === 1 ? "" : "es"} in this window (${tradable} with real trading) — try This Week for more.`
+          : null,
+        legs.length === 0 && !aiFailed
           ? mode === "mismatch"
             ? `No mismatches this scan: no non-top-3 favorite facing a bottom-third side by ${Math.round(MISMATCH.minGapShare * 100)}%+ of the table.`
-            : "Nothing cleared the bar this scan — no pick beats a forced one."
+            : mode === "opinion"
+              ? `The AI didn't rate any researched favorite ${Math.round(OPINION.minProbability * 100)}%+ to win with ${OPINION.minConfidence}/10+ confidence.`
+              : "Nothing cleared the bar this scan."
           : null,
         valueNote,
         mode === "mismatch" && tabled.missing.length
@@ -368,7 +392,7 @@ export async function POST(request: Request) {
   const fresh = new URL(request.url).searchParams.get("fresh") === "1";
   const body = ((await request.json().catch(() => null)) ?? {}) as Body;
   const scope = readScope(body);
-  const mode: PickMode = body.mode === "sharp" || body.mode === "safe" || body.mode === "ai" ? body.mode : "mismatch";
+  const mode: PickMode = (["sharp", "safe", "ai", "mismatch"] as const).find((m) => m === body.mode) ?? "opinion";
   const profile = await loadProfile(body.history);
   const key = cacheKey(scope, describeVaultProfile(profile), mode);
   if (!fresh) {

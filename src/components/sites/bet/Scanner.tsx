@@ -180,10 +180,10 @@ export function Scanner({
 }) {
   const [mode, setMode] = useState<"singles" | "parlay">("singles");
   /**
-   * What a pick rests on: a good team against a bottom-third one (default), the likeliest
-   * winners, the AI's own estimate beating the price, or a price edge vs the sharp books.
+   * What a pick rests on: who the AI thinks wins (default), a good team against a
+   * bottom-third one, the likeliest winners, or a price edge vs the sharp books.
    */
-  const [pickMode, setPickMode] = useState<"mismatch" | "safe" | "ai" | "sharp">("mismatch");
+  const [pickMode, setPickMode] = useState<"opinion" | "mismatch" | "safe" | "sharp">("opinion");
   /** On-demand deep checks in flight or failed, by ticker. */
   const [deepState, setDeepState] = useState<Record<string, { busy: boolean; error?: string }>>({});
 
@@ -204,7 +204,7 @@ export function Scanner({
           // An AI pick is judged on the AI's estimate; the books' price gates the other two.
           sharp: l.basis === "ai" ? undefined : l.sharp,
           futures: !!l.futures,
-          mode: l.basis,
+          mode: rec?.mode ?? l.basis,
           history: profile,
         }),
       });
@@ -305,11 +305,13 @@ export function Scanner({
   // Singles: each leg sized by fractional Kelly, the daily cap shared down the list; with no
   // bankroll set, every single takes the flat stake below.
   let running = exposure;
+  // Modes that pick on who wins rather than on price take a flat stake: Kelly stakes nothing
+  // on a pick without a price edge.
+  const flatStakes = rec?.mode === "opinion" || rec?.mode === "safe" || rec?.mode === "mismatch";
   const singleStakes = shown.map((l) => {
     // A pick the deep check vetoed gets no stake.
     if (l.vetoed) return { amount: 0, advice: null };
-    // Kelly stakes nothing without an edge, so Safest Wins picks take the flat stake instead.
-    const advice = l.basis === "safe" || l.basis === "mismatch" ? null : adviseStake(bankroll, l.modelProbability, kalshiDecimal(l.leg.price ?? 50), running);
+    const advice = flatStakes ? null : adviseStake(bankroll, l.modelProbability, kalshiDecimal(l.leg.price ?? 50), running);
     const amount = advice ? advice.stake : stake;
     running += amount;
     return { amount, advice };
@@ -329,9 +331,8 @@ export function Scanner({
             <h2 className="font-kalshi-bold text-lg">AI Soccer Scanner</h2>
             <p className={cn("text-sm", T.muted)}>
               Covers {SCAN_LEAGUES.slice(0, -1).join(", ")}, and {SCAN_LEAGUES.at(-1)} on Kalshi. AI Picks researches
-              the 15 most-traded matches and keeps the ones where its own read beats the price; Price Edges keeps only
-              matches Kalshi has cheaper than the sharp books. Deep-check any pick before you bet it. Season-long title
-              races live in the Waiting Game.
+              the 15 clearest favorites and keeps the ones the AI rates 60%+ to win with real confidence. Deep-check any
+              pick before you bet it. Season-long title races live in the Waiting Game.
             </p>
           </div>
         </div>
@@ -340,9 +341,9 @@ export function Scanner({
           <div role="radiogroup" aria-label="Pick style" className="grid grid-cols-2 gap-1 rounded-xl sm:grid-cols-4 border border-[#1E2638] bg-[#050D0A] p-1">
             {(
               [
+                ["opinion", "AI Picks", "Who the AI thinks wins"],
                 ["mismatch", "Mismatches", "Good team vs bottom third"],
                 ["safe", "Safest Wins", "Likeliest winners, 60%+"],
-                ["ai", "AI Value", "AI's read beats the price"],
                 ["sharp", "Price Edges", "Cheaper than the books"],
               ] as const
             ).map(([id, label, sub]) => (
@@ -490,7 +491,7 @@ export function Scanner({
             {shown.length === 0 ? (
               <p className={cn("text-sm", T.muted)}>
                 {rec.legs.length === 0
-                  ? "No leg cleared the bar this scan. Try again closer to kickoff, when prices move."
+                  ? "No picks this scan — the reason is just below."
                   : stale
                     ? `None of this scan's ${rec.legs.length} legs fit ${windowLabel} in the leagues picked — tap Generate to scan them.`
                     : `None of this scan's legs fit ${windowLabel} any more — rescan for fresh fixtures.`}
@@ -636,7 +637,10 @@ export function Scanner({
               </ol>
             )}
 
-            {rec.note && <p className={cn("text-xs", T.muted)}>{rec.note}</p>}
+            {rec.note && (
+              // With no picks the note is the answer, so it reads as one.
+              <p className={cn("text-xs", rec.legs.length ? T.muted : "text-[#F5F7F4]/90")}>{rec.note}</p>
+            )}
             {rec.history && (
               <p className={cn("text-[11px]", T.muted)}>
                 {rec.history.applied
@@ -653,7 +657,7 @@ export function Scanner({
 
           {shown.length > 0 && (mode === "singles" || shown.length < 2) && (
             <div className={cn(T.card, "flex flex-col gap-3 p-4 sm:p-5")}>
-              {bankroll.bankroll && rec.mode !== "safe" && rec.mode !== "mismatch" ? (
+              {bankroll.bankroll && !flatStakes ? (
                 <p className={cn("text-xs", T.muted)}>
                   Each single is sized by your Kelly setting and caps (Edge tab) ·{" "}
                   <span className="text-white">{formatMoney(singlesTotal)}</span> total
@@ -671,8 +675,8 @@ export function Scanner({
                     />
                   </div>
                   <p className={cn("text-[11px]", T.muted)}>
-                    {rec.mode === "safe" || rec.mode === "mismatch"
-                      ? "Flat stake on each single — Kelly sizing stakes nothing without an edge, so Safest Wins uses this."
+                    {flatStakes
+                      ? "Flat stake on each single — Kelly sizing stakes nothing without a price edge, so this mode uses a flat stake."
                       : "Flat stake on each single — set a bankroll in the Edge tab for Kelly-sized stakes."}
                   </p>
                 </div>

@@ -385,5 +385,5 @@ export interface SoccerRecommendation {
   /** The leagues and time window this scan covered. */
   scope?: ScanScope;
   /** "ai" = the AI's estimate vs the Kalshi price; "sharp" = Kalshi vs the sharp books. */
-  mode?: "ai" | "sharp" | "safe" | "mismatch";
+  mode?: "opinion" | "ai" | "sharp" | "safe" | "mismatch";
 }

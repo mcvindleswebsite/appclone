@@ -1,7 +1,7 @@
 import { checkAccess } from "@/lib/bet/access";
 import { footballFacts } from "@/lib/bet/football-api";
 import { describeVaultProfile } from "@/lib/bet/history";
-import { failReason, mismatchFailReason, safeFailReason } from "@/lib/bet/picks";
+import { failReason, mismatchFailReason, opinionFailReason, safeFailReason } from "@/lib/bet/picks";
 import { loadProfile } from "@/lib/bet/profile";
 import { researchLeg } from "@/lib/bet/research";
 import { isScanLeague } from "@/lib/bet/scan-scope";
@@ -61,14 +61,18 @@ export async function POST(request: Request) {
     const analysis = await researchLeg(leg, describeVaultProfile(profile), { deep: true, facts: facts?.text });
     if (!analysis.researched) return Response.json({ error: "The deep check didn't finish — try again." }, { status: 502 });
     const merged = facts ? { ...analysis, reasoningStats: mergeStats(facts.stats, analysis.reasoningStats) } : analysis;
+    // The same bar the pick's scan mode used.
+    const bars: Record<string, typeof failReason> = {
+      safe: safeFailReason,
+      mismatch: mismatchFailReason,
+      opinion: opinionFailReason,
+    };
+    const bar = bars[String(body.mode)] ?? failReason;
     return Response.json({
       analysis: merged,
       footballData: !!facts,
-      // Null: the pick still clears the bar after the deep check — the same bar its scan mode used.
-      failReason: (body.mode === "safe" ? safeFailReason : body.mode === "mismatch" ? mismatchFailReason : failReason)(
-        { price: leg.price, volume: num(body.volume) ?? 0, sharp, futures },
-        merged
-      ),
+      // Null: the pick still clears the bar after the deep check.
+      failReason: bar({ price: leg.price, volume: num(body.volume) ?? 0, sharp, futures }, merged),
     });
   } catch {
     return Response.json({ error: "The deep check failed — the AI didn't respond." }, { status: 502 });

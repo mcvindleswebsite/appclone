@@ -68,6 +68,32 @@ export const mismatchFailReason = (input: PickInput, a: LegAnalysis): string | n
   return null;
 };
 
+/**
+ * AI Picks: the AI's own opinion on who wins, the way the scanner first worked. No price
+ * test: the pick shows its EV, but the AI's belief and confidence are what qualify it.
+ */
+export const OPINION = {
+  /** The AI has to rate the pick at least this likely to win. */
+  minProbability: 0.6,
+  /** And be at least this sure of that estimate (1-10). */
+  minConfidence: 5,
+  /** Only favorites the market rates this high are worth researching. */
+  minMarket: 0.45,
+  /** Thin leagues (Saudi) are allowed down to this; the pick is flagged as thin. */
+  minVolume: 200,
+} as const;
+
+export const opinionFailReason = (input: PickInput, a: LegAnalysis): string | null => {
+  if (input.price === null) return "No Kalshi price";
+  if (!a.researched) return "Research failed";
+  if (input.volume < OPINION.minVolume) return "Market too thin";
+  if (a.rating === "BUM PICK") return "Rated a bum pick";
+  if (a.opponentTier.trapGame) return "Trap game";
+  if (a.probability < OPINION.minProbability) return `AI rates it under ${Math.round(OPINION.minProbability * 100)}%`;
+  if (a.hitConfidence < OPINION.minConfidence) return `AI confidence under ${OPINION.minConfidence}/10`;
+  return null;
+};
+
 /** Safest Wins: the favorite must be at least this likely to win, by the market's best price. */
 export const SAFE_MIN_PROBABILITY = 0.6;
 
