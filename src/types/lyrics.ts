@@ -40,6 +40,8 @@ export interface Parody {
   title: string;
   song: SongMeta;
   chunks: LyricChunk[];
+  /** What the parody is about, written once for the whole song; the AI assist reads it on every chunk. Studio-only. */
+  brief?: string;
   /** Global sync offset in seconds, added to every line time against the original video. */
   offset: number;
   /** The parody recording visitors hear. Optional: parodies saved before it existed lack it. */
@@ -70,6 +72,9 @@ export interface ParodyAssistRequest {
   song: Pick<SongMeta, "title" | "artist">;
   label: string;
   lines: Pick<LyricLine, "original" | "parody">[];
+  /** The parody-wide description. */
+  brief: string;
+  /** Optional extra direction for this chunk only. */
   direction: string;
   /** Parody text of the other chunks, so the theme carries across the song. */
   context: string;
@@ -83,3 +88,4 @@ export interface ParodyAssistResponse {
 export const MAX_CHUNKS = 60;
 export const MAX_LINES_PER_CHUNK = 40;
 export const MAX_LINE_CHARS = 300;
+export const MAX_BRIEF_CHARS = 2000;

@@ -12,8 +12,16 @@ export async function GET(request: Request) {
   try {
     const parodies = await readParodies();
     if (!parodies) return Response.json({ parodies: [], storage: false });
-    const admin = isLyricsAdmin(request);
-    return Response.json({ parodies: admin ? parodies : parodies.filter((p) => p.published), storage: true });
+    if (isLyricsAdmin(request)) return Response.json({ parodies, storage: true });
+    // The description is notes for the AI; visitors don't get it.
+    const published = parodies
+      .filter((p) => p.published)
+      .map((p) => {
+        const visible = { ...p };
+        delete visible.brief;
+        return visible;
+      });
+    return Response.json({ parodies: published, storage: true });
   } catch {
     return Response.json({ error: "Couldn't load parodies" }, { status: 502 });
   }

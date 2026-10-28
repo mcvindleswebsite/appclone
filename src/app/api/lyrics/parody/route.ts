@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import { checkLyricsAccess } from "@/lib/lyrics/access";
 import { countSyllables } from "@/lib/lyrics/chunks";
-import { MAX_LINE_CHARS, MAX_LINES_PER_CHUNK, type ParodyAssistRequest, type ParodyAssistResponse } from "@/types/lyrics";
+import { MAX_BRIEF_CHARS, MAX_LINE_CHARS, MAX_LINES_PER_CHUNK, type ParodyAssistRequest, type ParodyAssistResponse } from "@/types/lyrics";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -22,7 +22,7 @@ You get one chunk of a song (a verse, chorus, or bridge): its original lines wit
 - Return exactly one parody line per original line, in order.
 - Keep every word the user already wrote. A drafted line stays as written; a partial line must begin with the user's exact text and you finish it.
 - Match each original line's syllable count (within one) and its rhyme scheme.
-- Follow the user's comedic direction and the theme their drafts establish. Make it funny and specific, not generic.
+- Follow what the parody is about (the user's description of the whole song), any extra direction for this chunk, and the theme their drafts establish. Make it funny and specific, not generic.
 - Write new lyrics only; never reuse more than a short phrase of the original lines.`;
 
 const SCHEMA = {
@@ -51,16 +51,19 @@ export async function POST(request: Request) {
     original: clip(l?.original, MAX_LINE_CHARS),
     parody: clip(l?.parody, MAX_LINE_CHARS),
   }));
+  const brief = clip(body.brief, MAX_BRIEF_CHARS).trim();
   const direction = clip(body.direction, 1000).trim();
   if (!lines.length) return Response.json({ error: "Pick a chunk with lyrics" }, { status: 400 });
-  if (!direction && lines.every((l) => !l.parody.trim())) {
-    return Response.json({ error: "Write a partial line or a comedic direction first" }, { status: 400 });
+  if (!brief && !direction && lines.every((l) => !l.parody.trim())) {
+    return Response.json({ error: "Describe the parody at the top of the page, or write a partial line first" }, { status: 400 });
   }
 
   const prompt = [
     `Song: "${clip(body.song?.title, 200)}" by ${clip(body.song?.artist, 200)}`,
     `Chunk: ${clip(body.label, 40)}`,
-    direction ? `Comedic direction: ${direction}` : "Comedic direction: follow the theme of the drafts.",
+    brief ? `What the parody is about: ${brief}` : "",
+    direction ? `Extra direction for this chunk: ${direction}` : "",
+    !brief && !direction ? "Comedic direction: follow the theme of the drafts." : "",
     clip(body.context, 6000).trim() ? `Parody so far in other chunks (keep the theme consistent):\n${clip(body.context, 6000)}` : "",
     "Lines:",
     ...lines.map(

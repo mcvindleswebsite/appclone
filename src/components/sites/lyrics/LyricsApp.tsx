@@ -299,6 +299,7 @@ export function LyricsApp() {
         song: { title: active.song.title, artist: active.song.artist },
         label: chunk.label,
         lines: chunk.lines.map((l) => ({ original: l.original, parody: l.parody })),
+        brief: active.brief ?? "",
         direction,
         context,
       }),
@@ -493,6 +494,21 @@ export function LyricsApp() {
                 <div ref={player.mount} className="aspect-video w-full shrink-0 overflow-hidden rounded-md bg-black sm:w-72" />
               )}
             </div>
+
+            {admin && (
+              <label className="lx-screen block space-y-1.5 p-3">
+                <span className="text-xs font-semibold">
+                  What&apos;s this parody about? <span className="lx-sub font-normal">(only you see this; the AI reads it for every verse)</span>
+                </span>
+                <textarea
+                  value={active.brief ?? ""}
+                  onChange={(e) => update({ brief: e.target.value.slice(0, 2000) })}
+                  rows={3}
+                  placeholder="e.g. My cat Mochi refuses to get off my keyboard while I work from home. She's dramatic, judges my code, and only moves for tuna."
+                  className="lx-input w-full resize-y"
+                />
+              </label>
+            )}
 
             {admin && (
               <div className="lx-screen space-y-2 p-3">

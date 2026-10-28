@@ -1,7 +1,7 @@
 import { redis } from "@/lib/bet/store";
 import { isRecording } from "@/lib/lyrics/recording";
 import { isYouTubeId } from "@/lib/lyrics/youtube-id";
-import { MAX_CHUNKS, MAX_LINE_CHARS, MAX_LINES_PER_CHUNK, type LyricChunk, type Parody, type SongMeta } from "@/types/lyrics";
+import { MAX_BRIEF_CHARS, MAX_CHUNKS, MAX_LINE_CHARS, MAX_LINES_PER_CHUNK, type LyricChunk, type Parody, type SongMeta } from "@/types/lyrics";
 
 export const PARODIES_KEY = "vindle_lyrics_parodies";
 
@@ -62,6 +62,7 @@ export const sanitizeParody = (value: unknown): Parody | null => {
     title: str(p.title, 200) || `${song.title} (Parody)`,
     song,
     chunks,
+    brief: str(p.brief, MAX_BRIEF_CHARS),
     offset: Math.min(30, Math.max(-30, num(p.offset, 0))),
     recording: isRecording(p.recording) ? { kind: p.recording.kind, id: p.recording.id } : null,
     recordingOffset: Math.min(60, Math.max(-60, num(p.recordingOffset, 0))),

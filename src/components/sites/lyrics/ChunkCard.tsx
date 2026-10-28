@@ -171,7 +171,7 @@ export function ChunkCard({ chunk, offset, admin, editing, showOriginal, activeL
               value={direction}
               onChange={(e) => setDirection(e.target.value.slice(0, 1000))}
               rows={2}
-              placeholder="Comedic direction (optional): e.g. it's about my cat refusing to get off my keyboard"
+              placeholder="Extra direction for this chunk only (optional): e.g. this verse is the cat's side of the story"
               className="lx-input w-full resize-none"
             />
             <div className="flex flex-wrap items-center gap-2">
