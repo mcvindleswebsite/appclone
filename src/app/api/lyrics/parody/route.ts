@@ -7,11 +7,18 @@ import { MAX_LINE_CHARS, MAX_LINES_PER_CHUNK, type ParodyAssistRequest, type Par
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MODEL = "claude-opus-5-5";
+/**
+ * Claude Haiku 5.5: the current successor to Claude 3.5 Haiku (claude-3-5-haiku-20241022, retired
+ * Feb 19, 2026). The API no longer accepts temperature, so the strict JSON schema and low effort
+ * keep the output consistent instead.
+ */
+const MODEL = "claude-haiku-5-5";
+/** Short on purpose: just enough to finish one chunk. */
+const MAX_TOKENS = 250;
 
-const SYSTEM = `You write song parodies. You get one chunk of a song (a verse, chorus, or bridge): its original lines with syllable counts, and the user's draft parody lines, some full, some partial, some empty.
+const SYSTEM = `You are a creative song parody writer. Analyze the provided original verse for rhyme scheme, meter, and syllable count. Complete the user's partial lines or draft the rest of the verse matching their comedic theme.
 
-First analyze the original chunk: its theme, its rhyme scheme (as letters, e.g. AABB or ABAB), and the syllable count of each line. Then finish the parody so it can be sung over the original melody:
+You get one chunk of a song (a verse, chorus, or bridge): its original lines with syllable counts, and the user's draft parody lines, some full, some partial, some empty. Give the theme in a few words and the rhyme scheme as letters (e.g. AABB). The parody must be singable over the original melody:
 - Return exactly one parody line per original line, in order.
 - Keep every word the user already wrote. A drafted line stays as written; a partial line must begin with the user's exact text and you finish it.
 - Match each original line's syllable count (within one) and its rhyme scheme.
@@ -66,15 +73,14 @@ export async function POST(request: Request) {
 
   try {
     const client = new Anthropic({ timeout: 50_000, maxRetries: 1 });
-    const response = await client.beta.messages.create({
+    const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 16000,
+      max_tokens: MAX_TOKENS,
+      // Thinking would spend the small token budget before any lyrics are written.
+      thinking: { type: "disabled" },
       output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
       system: SYSTEM,
       messages: [{ role: "user", content: prompt }],
-      // A policy decline re-runs on a fallback model inside the same call.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
     });
     if (response.stop_reason === "refusal") return Response.json({ error: "The AI declined this one" }, { status: 422 });
     if (response.stop_reason === "max_tokens") return Response.json({ error: "The AI ran out of room — try a shorter chunk" }, { status: 502 });
