@@ -1,0 +1,17 @@
+/* /me: the password card's wrong-password shake. */
+@keyframes me-shake {
+  20%,
+  60% {
+    transform: translate(calc(-50% - 8px), -50%);
+  }
+  40%,
+  80% {
+    transform: translate(calc(-50% + 8px), -50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[me-shake_0\.4s\] {
+    animation: none;
+  }
+}
