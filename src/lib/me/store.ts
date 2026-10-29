@@ -1,9 +1,11 @@
 import { redis } from "@/lib/bet/store";
-import type { MeProfile, StyleExample } from "@/types/me";
+import type { MeProfile, MeSource, StyleExample } from "@/types/me";
 
 /** /me data in Upstash: examples one per hash field, everything else in one profile document. */
 const EXAMPLES_KEY = "vindle_me_examples";
 const PROFILE_KEY = "vindle_me_profile";
+/** The screenshots and pastes examples were read from, one per hash field, for rescans. */
+const SOURCES_KEY = "vindle_me_sources";
 
 /** Today notes stay this long; only the last day or two ever reach the AI. */
 const TODAY_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
@@ -44,7 +46,21 @@ export const addExamples = async (examples: StyleExample[]) => {
   need(await redis(["HSET", EXAMPLES_KEY, ...examples.flatMap((e) => [e.id, JSON.stringify(e)])]));
 };
 
-export const deleteExample = async (id: string) => need(await redis(["HDEL", EXAMPLES_KEY, id]));
+export const deleteExamples = async (ids: string[]) => {
+  if (ids.length) need(await redis(["HDEL", EXAMPLES_KEY, ...ids]));
+};
+
+export const addSource = async (source: MeSource) => need(await redis(["HSET", SOURCES_KEY, source.id, JSON.stringify(source)]));
+
+export const readSource = async (id: string): Promise<MeSource | null> => {
+  const reply = need(await redis(["HGET", SOURCES_KEY, id]));
+  return typeof reply.result === "string" ? (JSON.parse(reply.result) as MeSource) : null;
+};
+
+/** Source ids, oldest first (ids start with a timestamp). */
+export const sourceIds = async () => (((need(await redis(["HKEYS", SOURCES_KEY])).result as string[] | null) ?? []).sort());
+
+export const deleteSource = async (id: string) => need(await redis(["HDEL", SOURCES_KEY, id]));
 
 export const readProfile = async (now = Date.now()): Promise<MeProfile> => {
   const reply = need(await redis(["GET", PROFILE_KEY]));

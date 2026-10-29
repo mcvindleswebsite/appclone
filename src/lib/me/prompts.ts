@@ -55,7 +55,9 @@ export const EXTRACT_SYSTEM = `You turn screenshots and pasted text of Vincent's
 
 - In screenshots from iMessage, Instagram, Hinge, Snapchat and similar apps, Vincent's messages are the ones on the right (usually the colored bubbles); the other person's are on the left.
 - Pasted text with no speaker labels is all Vincent's messages.
-- Copy every message exactly as written: same capitalization, spelling, slang, punctuation, emoji, and typos. Never fix or tidy anything. Each bubble is its own turn.
+- Transcribe every message bubble you can see, top to bottom, including ones cut off at the top or bottom edge (copy the visible part). Never summarize, sample, or skip "repetitive" messages: the count matters, and a screenshot usually holds 10 to 60 bubbles.
+- Each bubble is its own turn, even when one person sends several in a row.
+- Copy every message exactly as written: same capitalization, spelling, slang, punctuation, emoji, and typos. Never fix or tidy anything.
 - Leave out timestamps, read receipts, reactions, app UI, and names in headers. Describe a sent photo or GIF as [photo] or [gif].
 - Separate conversations (different people or screenshots that don't connect) are separate entries.
 - Label each conversation with the situation it mostly shows: ${SITUATIONS.join(", ")}.

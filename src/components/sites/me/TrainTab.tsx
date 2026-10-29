@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { ChevronDown, Loader2, Plus, RefreshCw, ScanLine, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
@@ -19,11 +19,32 @@ const LEVELS = [
 
 const situationLabel = (s: string) => s.replace("-", " ");
 
+/** Screenshots go up a few per request, each read on its own, so no request runs long. */
+const PER_REQUEST = 3;
+const MAX_SCREENSHOTS = 30;
+
+const myMessages = (examples: StyleExample[]) => examples.reduce((n, e) => n + e.turns.filter((t) => t.who === "me").length, 0);
+
+/** Runs `run` over `items`, `width` at a time, calling `onDone` after each. */
+const pool = async <T,>(items: T[], width: number, run: (item: T) => Promise<void>, onDone: () => void) => {
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) {
+      await run(items[next++]);
+      onDone();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, items.length) }, lane));
+};
+
 export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile: (p: MeProfile) => void }) {
   const [examples, setExamples] = useState<StyleExample[] | null>(null);
   const [images, setImages] = useState<ImageInput[]>([]);
   const [text, setText] = useState("");
-  const [busy, setBusy] = useState<"add" | "style" | null>(null);
+  const [busy, setBusy] = useState<"add" | "style" | "rescan" | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  /** Conversations from before screenshots were kept; set after a rescan finds some. */
+  const [unsaved, setUnsaved] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const [showStyle, setShowStyle] = useState(false);
   const [banned, setBanned] = useState("");
@@ -40,27 +61,107 @@ export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile
     return () => clearTimeout(first);
   }, [load]);
 
-  const messages = (examples ?? []).reduce((n, e) => n + e.turns.filter((t) => t.who === "me").length, 0);
+  const messages = myMessages(examples ?? []);
   const level = [...LEVELS].reverse().find((l) => messages >= l.at) ?? LEVELS[0];
   const next = LEVELS.find((l) => l.at > messages);
 
   const add = async () => {
     setBusy("add");
     setNote(null);
+    const total = images.length;
+    const batches: { images: ImageInput[]; text: string }[] = [];
+    for (let i = 0; i < Math.max(total, 1); i += PER_REQUEST) batches.push({ images: images.slice(i, i + PER_REQUEST), text: "" });
+    batches[0].text = text;
+    let done = 0;
+    let added: StyleExample[] = [];
+    let failed: string | null = null;
+    if (total) setProgress(`Reading 0 of ${total} screenshots…`);
     try {
-      const data = await meFetch<{ added: number; examples: StyleExample[]; profile: MeProfile }>("/api/me/examples", {
-        method: "POST",
-        json: { images, text },
-      });
-      setExamples((prev) => [...[...data.examples].reverse(), ...(prev ?? [])]);
-      onProfile(data.profile);
-      setImages([]);
-      setText("");
-      setNote(`Learned ${data.added} conversation${data.added === 1 ? "" : "s"} and updated your style.`);
+      await pool(
+        batches,
+        2,
+        async (batch) => {
+          try {
+            const data = await meFetch<{ examples: StyleExample[] }>("/api/me/examples", {
+              method: "POST",
+              json: { ...batch, rebuild: false },
+            });
+            added = [...added, ...data.examples];
+          } catch (e) {
+            failed = e instanceof Error ? e.message : "Couldn't read some of them";
+          }
+          done += batch.images.length;
+        },
+        () => {
+          if (total) setProgress(`Reading ${done} of ${total} screenshots…`);
+        }
+      );
+      if (added.length) {
+        setExamples((prev) => [...[...added].sort((a, b) => b.createdAt - a.createdAt), ...(prev ?? [])]);
+        setImages([]);
+        setText("");
+        setProgress("Updating your style…");
+        onProfile((await meFetch<{ profile: MeProfile }>("/api/me/style", { method: "POST" })).profile);
+      }
+      const learned = `Learned ${myMessages(added)} of your messages from ${added.length} conversation${added.length === 1 ? "" : "s"}.`;
+      setNote(added.length ? (failed ? `${learned} Some didn't go through: ${failed}` : learned) : (failed ?? "Couldn't add that"));
     } catch (e) {
       setNote(e instanceof Error ? e.message : "Couldn't add that");
     } finally {
       setBusy(null);
+      setProgress(null);
+    }
+  };
+
+  const rescan = async () => {
+    setBusy("rescan");
+    setNote(null);
+    try {
+      const { sources, unsaved: older } = await meFetch<{ sources: string[]; unsaved: number }>("/api/me/rescan");
+      setUnsaved(older);
+      if (!sources.length) {
+        setNote(older ? "None of these were saved as screenshots, so there's nothing to rescan yet." : "Nothing to rescan yet.");
+        return;
+      }
+      let done = 0;
+      let failed = 0;
+      setProgress(`Rescanning 0 of ${sources.length}…`);
+      await pool(
+        sources,
+        3,
+        async (id) => {
+          await meFetch("/api/me/rescan", { method: "POST", json: { id } }).catch(() => failed++);
+          done++;
+        },
+        () => setProgress(`Rescanning ${done} of ${sources.length}…`)
+      );
+      setProgress("Updating your style…");
+      const [list, style] = await Promise.all([
+        meFetch<{ examples: StyleExample[] }>("/api/me/examples"),
+        meFetch<{ profile: MeProfile }>("/api/me/style", { method: "POST" }),
+      ]);
+      setExamples(list.examples);
+      onProfile(style.profile);
+      setNote(
+        `Rescanned ${sources.length - failed} of ${sources.length}: ${myMessages(list.examples)} of your messages now.` +
+          (failed ? " Run it again for the rest." : "")
+      );
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Couldn't rescan");
+    } finally {
+      setBusy(null);
+      setProgress(null);
+    }
+  };
+
+  const forgetUnsaved = async () => {
+    try {
+      const { removed } = await meFetch<{ removed: string[] }>("/api/me/examples?unsaved=1", { method: "DELETE" });
+      setExamples((prev) => prev?.filter((e) => !removed.includes(e.id)) ?? null);
+      setUnsaved(0);
+      setNote(`Forgot ${removed.length}. Add those screenshots again and they'll be read properly.`);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Couldn't do that");
     }
   };
 
@@ -111,7 +212,7 @@ export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile
       </div>
 
       <div className="flex flex-col gap-3 rounded-3xl border border-black/10 p-4">
-        <ImagePicker images={images} onChange={setImages} label="Your chats" />
+        <ImagePicker images={images} onChange={setImages} label="Your chats" max={MAX_SCREENSHOTS} />
         <textarea
           value={text}
           onChange={(event) => setText(event.target.value)}
@@ -126,9 +227,22 @@ export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile
           className="flex items-center justify-center gap-2 rounded-full bg-black py-3.5 text-[15px] font-semibold text-white disabled:opacity-30"
         >
           {busy === "add" && <Loader2 className="size-4 animate-spin" />}
-          {busy === "add" ? "Reading…" : "Teach it"}
+          {busy === "add" ? (progress ?? "Reading…") : "Teach it"}
         </button>
+        {busy === "rescan" && progress && <p className="text-[13px] text-black/60">{progress}</p>}
         {note && <p className="text-[13px] text-black/60">{note}</p>}
+        {unsaved > 0 && !busy && (
+          <div className="rounded-2xl bg-black/[0.04] p-3 text-[13px]">
+            <p className="text-black/70">
+              {unsaved} conversation{unsaved === 1 ? " was" : "s were"} added before screenshots were saved, so{" "}
+              {unsaved === 1 ? "it" : "they"} can&apos;t be rescanned. Forget {unsaved === 1 ? "it" : "them"}, then add those screenshots
+              again.
+            </p>
+            <button type="button" onClick={() => void forgetUnsaved()} className="mt-2 rounded-full bg-black px-4 py-1.5 font-semibold text-white">
+              Forget {unsaved} older
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="rounded-3xl border border-black/10">
@@ -190,15 +304,25 @@ export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile
       </div>
 
       <div className="flex flex-col gap-2">
-        <p className="px-1 text-[12px] font-semibold tracking-[0.12em] text-black/50 uppercase">
-          {examples?.length ?? 0} conversations learned
-        </p>
+        <div className="flex items-center justify-between px-1">
+          <p className="text-[12px] font-semibold tracking-[0.12em] text-black/50 uppercase">
+            {examples?.length ?? 0} conversations · {messages} messages
+          </p>
+          <button
+            type="button"
+            onClick={() => void rescan()}
+            disabled={!!busy || !examples?.length}
+            className="flex items-center gap-1.5 rounded-full border border-black px-3 py-1 text-[12px] font-semibold disabled:opacity-30"
+          >
+            {busy === "rescan" ? <Loader2 className="size-3.5 animate-spin" /> : <ScanLine className="size-3.5" />} Rescan
+          </button>
+        </div>
         {examples?.map((e) => (
           <div key={e.id} className="flex items-start gap-3 rounded-2xl border border-black/10 p-3">
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold tracking-[0.08em] text-black/40 uppercase">
                 {situationLabel(e.situation)}
-                {e.source === "sent" ? " · sent" : ""}
+                {e.source === "sent" ? " · sent" : ` · ${e.turns.filter((t) => t.who === "me").length} yours`}
               </p>
               {e.turns.slice(0, 3).map((t, i) => (
                 <p key={i} className={cn("truncate text-[14px]", t.who === "them" && "text-black/45")}>

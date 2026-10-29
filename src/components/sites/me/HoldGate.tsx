@@ -5,15 +5,34 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const HOLD_MS = 15_000;
+/** Once this device has gotten in, the hold is just long enough not to happen by accident. */
+const RETURNING_HOLD_MS = 3_000;
+const SEEN_KEY = "vindle_me_seen";
 /** The hold has to start within this many px of the center, and stay within it. */
 const CENTER_RADIUS = 110;
 const SECRET_EMAIL = "vincent@mcvindle.com";
 
 /**
  * A completely black page. Holding the center for 15 seconds without letting go or moving
- * brings up the password (skipped when this browser is still logged in).
+ * (3 on a device that has gotten in before) brings up the password, skipped when this browser
+ * is still logged in.
  */
-export function HoldGate({ onUnlock }: { onUnlock: () => void }) {
+export function HoldGate({ onUnlock: done }: { onUnlock: () => void }) {
+  const onUnlock = () => {
+    try {
+      localStorage.setItem(SEEN_KEY, "1");
+    } catch {
+      // Private mode: it just asks for the long hold again.
+    }
+    done();
+  };
+  const holdMs = () => {
+    try {
+      return localStorage.getItem(SEEN_KEY) ? RETURNING_HOLD_MS : HOLD_MS;
+    } catch {
+      return HOLD_MS;
+    }
+  };
   const [asking, setAsking] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +86,7 @@ export function HoldGate({ onUnlock }: { onUnlock: () => void }) {
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => {
         if (asking || hold.current || !nearCenter(event.clientX, event.clientY)) return;
-        hold.current = { id: event.pointerId, timer: setTimeout(() => void held(), HOLD_MS) };
+        hold.current = { id: event.pointerId, timer: setTimeout(() => void held(), holdMs()) };
       }}
       onPointerMove={(event) => {
         if (hold.current?.id === event.pointerId && !nearCenter(event.clientX, event.clientY)) cancel();

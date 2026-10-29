@@ -16,6 +16,16 @@ export interface StyleExample {
   situation: Situation;
   turns: ChatTurn[];
   createdAt: number;
+  /** The saved screenshot or paste it was read from, so it can be rescanned. */
+  sourceId?: string;
+}
+
+/** A screenshot or paste kept after reading, so a better reader can go over it again. */
+export interface MeSource {
+  id: string;
+  image?: ImageInput;
+  text?: string;
+  createdAt: number;
 }
 
 /** What he did today: background the AI may use only when a conversation is on it. */
