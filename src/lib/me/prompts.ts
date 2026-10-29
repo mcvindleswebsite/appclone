@@ -24,20 +24,25 @@ export const DEFAULT_BANNED = [
   "more words than he'd type",
 ];
 
-/** Examples go into the cached prompt up to about this many characters (~75K tokens), newest kept. */
-const MAX_EXAMPLE_CHARS = 300_000;
+/**
+ * Example budgets in characters, newest kept. Every Opus call pays for these input tokens, so
+ * they're sized to what copying a voice needs: replies lean on the style guide plus a recent
+ * sample (~10K tokens); the occasional style rebuild reads more (~30K tokens).
+ */
+const WRITE_EXAMPLE_CHARS = 40_000;
+const STYLE_EXAMPLE_CHARS = 120_000;
 
 const renderExample = (e: StyleExample, i: number) =>
   `<example n="${i + 1}" situation="${e.situation}"${e.source === "sent" ? ' source="he sent this"' : ""}>\n${e.turns
     .map((t) => `${t.who === "me" ? "VINCENT" : "THEM"}: ${t.text}`)
     .join("\n")}\n</example>`;
 
-export const renderExamples = (examples: StyleExample[]) => {
+export const renderExamples = (examples: StyleExample[], maxChars = WRITE_EXAMPLE_CHARS) => {
   const out: string[] = [];
   let size = 0;
   for (let i = examples.length - 1; i >= 0; i--) {
     const text = renderExample(examples[i], i);
-    if (size + text.length > MAX_EXAMPLE_CHARS) break;
+    if (size + text.length > maxChars) break;
     out.unshift(text);
     size += text.length;
   }
@@ -109,7 +114,7 @@ Write it as a tight list of rules with examples, under 900 words. Where the exam
 
 export const styleInput = (examples: StyleExample[], profile: MeProfile) =>
   [
-    `<examples>\n${renderExamples(examples)}\n</examples>`,
+    `<examples>\n${renderExamples(examples, STYLE_EXAMPLE_CHARS)}\n</examples>`,
     // His own description of how he texts and jokes: weigh it below what the examples show.
     answered(profile, ["How you text", "Your humor"]) ? `<his_description_of_himself>\n${answered(profile, ["How you text", "Your humor"])}\n</his_description_of_himself>` : "",
   ]

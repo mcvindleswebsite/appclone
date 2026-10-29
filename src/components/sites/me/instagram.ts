@@ -178,10 +178,10 @@ export const ownerCandidates = (threads: IgThread[]) => {
 /** A quiet stretch this long starts a new conversation. */
 const GAP_MS = 6 * 60 * 60 * 1000;
 const MAX_TURNS = 80;
-/** Roughly what the prompts can use (they keep the newest ~300K characters), plus some spare. */
-const TOTAL_CHARS = 400_000;
+/** A bit more than the style rebuild reads (120K characters); more would only sit unused. */
+const TOTAL_CHARS = 150_000;
 /** So one long-running chat doesn't crowd out everyone else. */
-const THREAD_CHARS = 40_000;
+const THREAD_CHARS = 15_000;
 
 export interface IgConversation {
   id: string;
