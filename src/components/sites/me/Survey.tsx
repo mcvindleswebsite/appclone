@@ -55,7 +55,7 @@ export function Survey({ profile, onProfile, onClose }: { profile: MeProfile; on
         </button>
       </header>
 
-      <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 pt-6">
+      <div className="mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col overflow-y-auto px-5 pt-6">
         <p className="text-[12px] font-semibold tracking-[0.12em] text-black/50 uppercase">{q.section}</p>
         <h2 className="mt-2 font-serif text-[28px] leading-tight font-bold">{q.question}</h2>
         <textarea

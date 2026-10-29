@@ -62,7 +62,8 @@ export function MeApp() {
   if (!unlocked) return <HoldGate onUnlock={() => setUnlocked(true)} />;
 
   return (
-    <div className="min-h-dvh bg-white font-sans text-black">
+    // The site locks html/body to the viewport (for the iPod), so /me scrolls inside its own layer.
+    <div className="fixed inset-0 overflow-y-auto overscroll-contain bg-white font-sans text-black">
       <header className="sticky top-0 z-20 border-b border-black/10 bg-white/90 pt-[env(safe-area-inset-top)] backdrop-blur">
         <div className="mx-auto flex h-14 max-w-md items-center px-5">
           <span className="font-serif text-[26px] font-bold tracking-tight">me</span>
