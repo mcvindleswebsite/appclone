@@ -14,3 +14,12 @@ export const checkAccess = (request: Request): Response | null => {
   }
   return null;
 };
+
+/** Vercel Cron calls authenticate with `Authorization: Bearer $CRON_SECRET`. */
+export const isCron = (request: Request) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const given = Buffer.from(request.headers.get("authorization") ?? "");
+  const want = Buffer.from(`Bearer ${secret}`);
+  return given.length === want.length && timingSafeEqual(given, want);
+};

@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import type { BetLeg, BetRecord, BetSlip, LegResult, Outcome } from "@/types/bet";
 
 import { GameLink } from "./GameLink";
+import { PaperBankroll } from "./PaperBankroll";
 import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
 
@@ -379,6 +380,8 @@ export function BetVault({
   return (
     <div className="flex flex-col gap-4">
       <QuickAdd onQuickAdd={onQuickAdd} onPhotoAdd={onPhotoAdd} accessKey={accessKey} />
+
+      <PaperBankroll accessKey={accessKey} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[

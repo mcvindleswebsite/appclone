@@ -1,18 +1,10 @@
-import { timingSafeEqual } from "node:crypto";
-
-import { checkAccess } from "@/lib/bet/access";
+import { checkAccess, isCron } from "@/lib/bet/access";
 import { settleRecords } from "@/lib/bet/settle";
 import { readVault, redis, VAULT_KEY } from "@/lib/bet/store";
 import { settleTracked } from "@/lib/bet/track";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-const safeEqual = (a: string, b: string) => {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-};
 
 /**
  * Settles every pending vault pick that has Kalshi tickers, straight from Kalshi's public
@@ -41,11 +33,7 @@ const sync = async () => {
 
 /** Vercel Cron: authenticated with `Authorization: Bearer $CRON_SECRET`. */
 export async function GET(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  const auth = request.headers.get("authorization") ?? "";
-  if (!secret || !safeEqual(auth, `Bearer ${secret}`)) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  if (!isCron(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   return sync();
 }
 

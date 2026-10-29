@@ -387,3 +387,64 @@ export interface SoccerRecommendation {
   /** "ai" = the AI's estimate vs the Kalshi price; "sharp" = Kalshi vs the sharp books. */
   mode?: "opinion" | "ai" | "sharp" | "safe" | "mismatch";
 }
+
+/** One leg of a paper parlay, frozen at the price it was "bought" at. */
+export interface PaperLeg {
+  ticker: string;
+  matchup: string;
+  pick: string;
+  league: string;
+  kickoffTime: string;
+  /** Kalshi price in cents when placed. */
+  price: number;
+  /** The AI's win probability, before calibration. */
+  probability: number;
+  result?: LegResult;
+}
+
+/** A parlay the paper bankroll bet with fake money. VOID: every leg was cancelled, stake refunded. */
+export interface PaperParlay {
+  id: string;
+  /** UTC day it was placed, YYYY-MM-DD. */
+  day: string;
+  placedAt: number;
+  legs: PaperLeg[];
+  /** Payout per $1 when placed, fees in. */
+  decimal: number;
+  /** Chance every leg wins, after calibration. */
+  probability: number;
+  stake: number;
+  outcome: Outcome | "VOID";
+  /** Money returned on settlement (0 on a loss). */
+  payout: number | null;
+  settledAt?: number;
+}
+
+/** How far the AI's leg probabilities are being trimmed or raised, learned from settled paper legs. */
+export interface PaperCalibration {
+  /** Multiplier on the AI's probability; 1 is unchanged. */
+  overall: number;
+  byLeague: { league: string; factor: number; legs: number }[];
+  /** Settled paper legs it's learned from. */
+  legs: number;
+  hit: number;
+  /** What the AI expected those legs to hit, summed. */
+  expected: number;
+}
+
+export interface PaperSummary {
+  start: number;
+  /** Cash not riding on a pending parlay. */
+  cash: number;
+  pending: number;
+  /** Cash plus pending stakes. */
+  balance: number;
+  startedAt: number | null;
+  lastRun: string | null;
+  lastNote: string | null;
+  wins: number;
+  losses: number;
+  calibration: PaperCalibration;
+  /** Newest first. */
+  parlays: PaperParlay[];
+}
