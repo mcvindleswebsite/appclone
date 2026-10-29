@@ -11,6 +11,7 @@ import { legTiming, slipTiming, timingTickers, type LegTiming, type SlipTiming }
 import { cn } from "@/lib/utils";
 import type { BetLeg, BetRecord, BetSlip, LegResult, Outcome } from "@/types/bet";
 
+import { FotmobLink } from "./FotmobLink";
 import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
 
@@ -122,6 +123,13 @@ function LegFinish({ leg, live, now }: { leg: BetLeg; live: Record<string, LegTi
       {now >= end ? "final soon" : `${playing ? "live · " : ""}ends ~${clockTime(end, now)}`}
     </span>
   );
+}
+
+/** The FotMob "Game" button for an open soccer leg, timed by Kalshi's latest start time. */
+function LegGame({ leg, live }: { leg: BetLeg; live: Record<string, LegTiming> }) {
+  if (leg.sport !== "Soccer" || (leg.result && leg.result !== "PENDING")) return null;
+  const startsAt = (leg.ticker && live[leg.ticker]?.startsAt) || leg.startsAt;
+  return startsAt ? <FotmobLink matchup={leg.matchup} kickoff={startsAt} /> : null;
 }
 
 const verdictColor = (verdict: string) =>
@@ -507,11 +515,14 @@ export function BetVault({
                   </div>
                   <p className="font-kalshi-bold mt-1.5 truncate">{slipLabel(r.slip)}</p>
                   {!multi ? (
-                    <p className={cn("truncate text-xs", r.slip.legs[0].result ? LEG_RESULT_STYLES[r.slip.legs[0].result] : T.muted)}>
-                      {r.slip.legs[0].matchup}
-                      {r.slip.legs[0].pick && ` · ${r.slip.legs[0].pick}`}
+                    <div className="flex items-center gap-2">
+                      <p className={cn("min-w-0 truncate text-xs", r.slip.legs[0].result ? LEG_RESULT_STYLES[r.slip.legs[0].result] : T.muted)}>
+                        {r.slip.legs[0].matchup}
+                        {r.slip.legs[0].pick && ` · ${r.slip.legs[0].pick}`}
                         {openPrice(r.slip.legs[0]) && ` @ ${openPrice(r.slip.legs[0])}¢`}
-                    </p>
+                      </p>
+                      <LegGame leg={r.slip.legs[0]} live={liveTiming} />
+                    </div>
                   ) : (
                     <>
                       <button
@@ -539,6 +550,7 @@ export function BetVault({
                               <span className="w-4 shrink-0 text-center">{leg.result ? LEG_RESULT_MARK[leg.result] : `${i + 1}`}</span>
                               <span className="min-w-0 flex-1 truncate">{leg.market || leg.pick}</span>
                               <LegFinish leg={leg} live={liveTiming} now={now} />
+                              <LegGame leg={leg} live={liveTiming} />
                               {openPrice(leg) && <span className="shrink-0 tabular-nums opacity-70">{openPrice(leg)}¢</span>}
                             </li>
                           ))}

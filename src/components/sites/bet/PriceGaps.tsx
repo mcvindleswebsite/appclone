@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { BetLeg, PriceGap } from "@/types/bet";
 
+import { FotmobLink } from "./FotmobLink";
 import { T } from "./theme";
 
 export const GAP_ALERTS_STORAGE = "mcvindle_bet_gap_alerts";
@@ -150,6 +151,7 @@ export function PriceGapList({
               <span className="font-kalshi-bold shrink-0 rounded-full border border-(--accent)/50 bg-(--accent-deep) px-2 py-0.5 text-[10px] text-(--accent)">
                 +{(g.sharp.edge * 100).toFixed(1)} pts
               </span>
+              <FotmobLink matchup={g.leg.matchup} kickoff={g.kickoffTime} />
               <button
                 type="button"
                 aria-label={`Evaluate ${g.leg.pick}`}

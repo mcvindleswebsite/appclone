@@ -124,7 +124,7 @@ const tokens = (name: string) =>
     .filter((t) => t.length > 1);
 
 /** Kalshi and API-Football spell clubs differently ("Man City" / "Manchester City"); any shared word prefix counts. */
-const sameTeam = (a: string, b: string) => {
+export const sameTeam = (a: string, b: string) => {
   const x = tokens(a);
   const y = tokens(b);
   return x.some((t) => y.some((w) => w.startsWith(t) || t.startsWith(w)));

@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { BetLeg, LegAnalysis, RecommendedLeg, SoccerRecommendation, VaultProfile } from "@/types/bet";
 
+import { FotmobLink } from "./FotmobLink";
 import { PriceGapList, type GapState } from "./PriceGaps";
 import { T } from "./theme";
 
@@ -586,6 +587,7 @@ export function Scanner({
                           {l.leg.matchup} · {l.league} · {l.futures ? seasonEnd(l.settlesAt) : kickoff(l.settlesAt)}
                         </p>
                       </div>
+                      {!l.futures && <FotmobLink matchup={l.leg.matchup} kickoff={l.kickoffTime} className="mt-0.5" />}
                       <span
                         className={cn(
                           "font-kalshi-bold shrink-0 rounded-full border px-2 py-0.5 text-[10px]",
