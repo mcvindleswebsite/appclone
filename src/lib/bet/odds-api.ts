@@ -16,6 +16,7 @@ const SPORT_KEYS: [RegExp, string][] = [
   [/^KXNBAGAME$/, "basketball_nba"],
   [/^KXWNBAGAME$/, "basketball_wnba"],
   [/^KXNCAAMBGAME$/, "basketball_ncaab"],
+  [/^KXEUROLEAGUEGAME$/, "basketball_euroleague"],
   [/^KXNHLGAME$/, "icehockey_nhl"],
   [/^KXMLBGAME$/, "baseball_mlb"],
   [/^KXEPLGAME$/, "soccer_epl"],

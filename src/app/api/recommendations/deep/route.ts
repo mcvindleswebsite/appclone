@@ -4,7 +4,7 @@ import { describeVaultProfile } from "@/lib/bet/history";
 import { failReason, mismatchFailReason, opinionFailReason, safeFailReason } from "@/lib/bet/picks";
 import { loadProfile } from "@/lib/bet/profile";
 import { researchLeg } from "@/lib/bet/research";
-import { isScanLeague } from "@/lib/bet/scan-scope";
+import { isScanLeague, sportOfLeague } from "@/lib/bet/scan-scope";
 import type { BetLeg, LegAnalysis, SharpLine } from "@/types/bet";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   const raw = (body.leg ?? {}) as Record<string, unknown>;
   const price = num(raw.price);
   const leg: BetLeg = {
-    sport: "Soccer",
+    sport: sportOfLeague(String(body.league)) === "basketball" ? String(body.league) : "Soccer",
     matchup: str(raw.matchup, 120),
     market: str(raw.market, 200),
     pick: str(raw.pick, 80),

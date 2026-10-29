@@ -2,8 +2,9 @@ import { checkAccess } from "@/lib/bet/access";
 import { fullKelly } from "@/lib/bet/bankroll";
 import { decimalToAmerican, kalshiDecimal, kalshiFee } from "@/lib/bet/engine";
 import { spotOf, standings, type TableSpot } from "@/lib/bet/football-api";
+import { espnStandings } from "@/lib/bet/espn";
 import { describeVaultProfile } from "@/lib/bet/history";
-import { soccerCandidates, type SoccerCandidate } from "@/lib/bet/kalshi-api";
+import { scanCandidates, type ScanCandidate } from "@/lib/bet/kalshi-api";
 import { BET_MODEL } from "@/lib/bet/model";
 import {
   failReason,
@@ -21,7 +22,16 @@ import {
 } from "@/lib/bet/picks";
 import { loadProfile } from "@/lib/bet/profile";
 import { researchLeg } from "@/lib/bet/research";
-import { isScanLeague, isTimeWindow, kickoffOf, SCAN_LEAGUES, windowRange, type ScanLeague, type ScanScope } from "@/lib/bet/scan-scope";
+import {
+  isScanLeague,
+  isTimeWindow,
+  kickoffOf,
+  SOCCER_SCAN_LEAGUES,
+  sportOfLeague,
+  windowRange,
+  type ScanLeague,
+  type ScanScope,
+} from "@/lib/bet/scan-scope";
 import { sharpLines } from "@/lib/bet/sharp";
 import { redis } from "@/lib/bet/store";
 import { trackPicks } from "@/lib/bet/track";
@@ -47,7 +57,10 @@ const SCREEN_HARD_MS = 100_000;
 const CACHE_KEY = "vindle_soccer_recs";
 const CACHE_SECONDS = 30 * 60;
 
-type Candidate = SoccerCandidate & { sharp?: SharpLine; table?: TableMatchup };
+type Candidate = ScanCandidate & { sharp?: SharpLine; table?: TableMatchup };
+
+/** Where a league's table comes from: API-Football for soccer, ESPN for basketball. */
+const tableSource = (league: string) => (sportOfLeague(league) === "basketball" ? "ESPN" : "API-Football");
 type PickMode = NonNullable<SoccerRecommendation["mode"]>;
 type Researched = { c: Candidate; a: LegAnalysis };
 
@@ -129,11 +142,13 @@ const screen = async (shortlist: Candidate[], history: string) => {
 
 const teamsOf = (matchup: string) => matchup.split(/\s+(?:vs\.?|v\.?|@|at)\s+/i).map((t) => t.trim());
 
-/** League-table spots for each candidate's pick and opponent (API-Football standings, cached). */
+/** League-table spots for each candidate's pick and opponent (API-Football or ESPN standings, cached). */
 const withTables = async (candidates: Candidate[]) => {
   const leagues = [...new Set(candidates.map((c) => c.league))] as ScanLeague[];
   const tables = new Map<string, Map<string, TableSpot> | null>(
-    await Promise.all(leagues.map(async (l) => [l, await standings(l).catch(() => null)] as const))
+    await Promise.all(
+      leagues.map(async (l) => [l, await (tableSource(l) === "ESPN" ? espnStandings(l) : standings(l)).catch(() => null)] as const)
+    )
   );
   const out = candidates.map((c): Candidate => {
     const table = tables.get(c.league);
@@ -174,7 +189,7 @@ const toPick = (r: Researched, mode: PickMode): RecommendedLeg => {
     settlesAt: c.settlesAt,
     ...(c.futures ? { futures: true } : {}),
     matchName: c.leg.matchup || c.leg.market,
-    kickoffTime: new Date(c.futures ? Date.parse(c.settlesAt) : kickoffOf(c.settlesAt)).toISOString(),
+    kickoffTime: new Date(c.futures ? Date.parse(c.settlesAt) : kickoffOf(c.settlesAt, c.league)).toISOString(),
     pick: c.leg.pick,
     odds: { kalshiCents: price, american: decimalToAmerican(decimal) },
     reasoningStats: [
@@ -183,7 +198,7 @@ const toPick = (r: Researched, mode: PickMode): RecommendedLeg => {
             {
               metric: "League table",
               value: `${c.leg.pick} ${ordinal(c.table.pick.rank)} vs ${opponent} ${ordinal(c.table.opponent.rank)} of ${c.table.of}`,
-              source: "API-Football",
+              source: tableSource(c.league),
             },
           ]
         : []),
@@ -201,7 +216,7 @@ const toPick = (r: Researched, mode: PickMode): RecommendedLeg => {
     ...(c.volume < MIN_VOLUME ? { thin: true } : {}),
     aiProbability: a.probability,
     deep: false,
-    footballData: !!c.table,
+    footballData: !!c.table && tableSource(c.league) === "API-Football",
     kelly: fullKelly(p, decimal),
     volume: c.volume,
     modelProbability: p,
@@ -248,7 +263,7 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
 
   // 1. Every active fixture in scope, priced against the sharp books (free, no AI), and for
   //    Mismatches placed on the real league table.
-  const raw = await soccerCandidates(scope);
+  const raw = await scanCandidates(scope);
   const sharp = await sharpLines(raw);
   const priced: Candidate[] = raw.map((c) => {
     const line = c.leg.ticker ? sharp.lines.get(c.leg.ticker) : undefined;
@@ -264,12 +279,16 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
   const noPriceEdge = mode === "sharp" ? liquid.length - eligible.length : 0;
 
   // 3. Research the best RESEARCH_BUDGET in the mode's order, no more than a few per league.
+  // A few leagues (basketball: mostly NBA and college) each get a bigger share of the budget.
+  const active = new Set(eligible.map((c) => c.league)).size;
+  const researchCap = Math.max(4, Math.ceil(RESEARCH_BUDGET / Math.max(1, active)));
+  const pickCap = active <= 3 ? MAX_PER_LEAGUE + 1 : MAX_PER_LEAGUE;
   const perLeague = new Map<string, number>();
   const shortlist = [...eligible]
     .sort((a, b) => strategy.order(a, b) || b.volume - a.volume)
     .filter((c) => {
       const n = perLeague.get(c.league) ?? 0;
-      if (n >= 4) return false;
+      if (n >= researchCap) return false;
       perLeague.set(c.league, n + 1);
       return true;
     })
@@ -283,8 +302,8 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
     .sort(rank(mode));
   const legs =
     mode === "opinion"
-      ? spread(qualified, OPINION_POOL.perLeague).slice(0, OPINION_POOL.picks)
-      : spread(qualified).slice(0, MAX_PICKS);
+      ? spread(qualified, active <= 3 ? OPINION_POOL.perLeague + 2 : OPINION_POOL.perLeague).slice(0, OPINION_POOL.picks)
+      : spread(qualified, pickCap).slice(0, MAX_PICKS);
 
   let parlay: SoccerRecommendation["parlay"] = null;
   if (legs.length >= 2) {
@@ -293,6 +312,8 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
     parlay = { probability, decimal, american: decimalToAmerican(decimal), ev: probability * decimal - 1 };
   }
 
+  const missingSoccer = tabled.missing.filter((l) => tableSource(l) === "API-Football");
+  const missingBasketball = tabled.missing.filter((l) => tableSource(l) === "ESPN");
   const insufficient = screened.filter((r) => r.a.researched && !r.a.dataSufficient && (mode === "ai" || !r.c.sharp)).length;
   // Every research call failing at once is the API, not the matches: usually spent credits.
   const aiFailed = screened.length > 0 && screened.every((r) => !r.a.researched);
@@ -327,7 +348,7 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
           ? `AI research failed for all ${screened.length} matches — the Anthropic API refused the calls. Check your credits at console.anthropic.com, then Rescan.`
           : null,
         candidates.length < 10
-          ? `Kalshi only lists ${candidates.length} soccer match${candidates.length === 1 ? "" : "es"} in this window (${tradable} with real trading) — try This Week for more.`
+          ? `Kalshi only lists ${candidates.length} game${candidates.length === 1 ? "" : "s"} in this window and these leagues (${tradable} with real trading) — try This Week for more.`
           : null,
         legs.length === 0 && !aiFailed
           ? mode === "mismatch"
@@ -337,10 +358,13 @@ const scan = async (scope: ScanScope, profile: VaultProfile | null, mode: PickMo
               : "Nothing cleared the bar this scan."
           : null,
         valueNote,
-        mode === "mismatch" && tabled.missing.length
-          ? `No league table from API-Football for ${tabled.missing.join(", ")}${
+        mode === "mismatch" && missingSoccer.length
+          ? `No league table from API-Football for ${missingSoccer.join(", ")}${
               process.env.FOOTBALL_API_KEY ? " (the plan may not cover this season)" : " (FOOTBALL_API_KEY not set)"
             } — those matches can't be checked.`
+          : null,
+        mode === "mismatch" && missingBasketball.length
+          ? `No usable standings for ${missingBasketball.join(", ")} — College Basketball and EuroLeague have no single table, and NBA/WNBA tables wait until teams have played 5+ games.`
           : null,
         noPriceEdge ? `${noPriceEdge} match${noPriceEdge === 1 ? "" : "es"} skipped: Kalshi wasn't cheaper than the sharp books.` : null,
         thin ? `${thin} market${thin === 1 ? "" : "s"} under $${strategy.minVolume.toLocaleString("en-US")} traded skipped as too thin.` : null,
@@ -365,7 +389,7 @@ const readScope = (body: Body): ScanScope => {
   const from = typeof body.from === "number" && Number.isFinite(body.from) ? body.from : fallback.from;
   const to = typeof body.to === "number" && Number.isFinite(body.to) ? body.to : fallback.to;
   const leagues = Array.isArray(body.leagues) ? body.leagues.filter(isScanLeague) : [];
-  return { window, from, to: Math.max(from, to), leagues: leagues.length ? leagues : [...SCAN_LEAGUES] };
+  return { window, from, to: Math.max(from, to), leagues: leagues.length ? leagues : [...SOCCER_SCAN_LEAGUES] };
 };
 
 /** Short, stable hash, so a changed Bet Vault record means a fresh scan rather than a stale cache hit. */
@@ -383,7 +407,7 @@ const cacheKey = (scope: ScanScope, history: string, mode: PickMode) => {
 };
 
 /**
- * Scans soccer markets on Kalshi in the requested leagues and time window and returns the
+ * Scans soccer and basketball markets on Kalshi in the requested leagues and time window and returns the
  * best +EV picks, each in a fixed pick structure. Body: ScanScope plus `history`, a
  * VaultProfile of the bettor's Bet Vault (used when Upstash isn't connected). Every pick is
  * also logged to the scanner's track record. Results are cached for 30 minutes (when

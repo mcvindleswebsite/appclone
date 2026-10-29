@@ -3,7 +3,7 @@
  * Shared by the Scanner (to ask for and filter picks) and the recommendations route.
  */
 
-export const SCAN_LEAGUES = [
+export const SOCCER_SCAN_LEAGUES = [
   "Premier League",
   "La Liga",
   "Serie A",
@@ -15,7 +15,19 @@ export const SCAN_LEAGUES = [
   "Saudi Pro League",
 ] as const;
 
+export const BASKETBALL_SCAN_LEAGUES = ["NBA", "College Basketball", "WNBA", "EuroLeague"] as const;
+
+export const SCAN_LEAGUES = [...SOCCER_SCAN_LEAGUES, ...BASKETBALL_SCAN_LEAGUES] as const;
+
 export type ScanLeague = (typeof SCAN_LEAGUES)[number];
+
+export type ScanSport = "soccer" | "basketball";
+
+export const sportOfLeague = (league: string): ScanSport =>
+  (BASKETBALL_SCAN_LEAGUES as readonly string[]).includes(league) ? "basketball" : "soccer";
+
+export const leaguesOfSport = (sport: ScanSport): readonly ScanLeague[] =>
+  sport === "basketball" ? BASKETBALL_SCAN_LEAGUES : SOCCER_SCAN_LEAGUES;
 
 export const TIME_WINDOWS = [
   { id: "today", label: "Today" },
@@ -37,8 +49,12 @@ export interface ScanScope {
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** Kalshi settles soccer match markets about two hours after kickoff. */
-export const kickoffOf = (settlesAt: string) => Date.parse(settlesAt) - 2 * 60 * 60 * 1000;
+/**
+ * Kalshi expects a soccer match market to settle about two hours after kickoff, and a
+ * basketball game about three hours after tip-off.
+ */
+export const kickoffOf = (settlesAt: string, league = "") =>
+  Date.parse(settlesAt) - (sportOfLeague(league) === "basketball" ? 3 : 2) * 60 * 60 * 1000;
 
 /** Kickoff range for a match window, in local time. Futures have no range. */
 export const windowRange = (window: TimeWindow, now: number): { from: number; to: number } => {

@@ -9,16 +9,18 @@ import { buildParlay, PAYOUT_TARGETS } from "@/lib/bet/parlay-builder";
 import { DEFAULT_WAGER, formatMoney } from "@/lib/bet/pnl";
 import {
   kickoffOf,
+  leaguesOfSport,
   SCAN_LEAGUES,
   TIME_WINDOWS,
   windowRange,
   type ScanLeague,
+  type ScanSport,
   type TimeWindow,
 } from "@/lib/bet/scan-scope";
 import { cn } from "@/lib/utils";
 import type { BetLeg, LegAnalysis, RecommendedLeg, SoccerRecommendation, VaultProfile } from "@/types/bet";
 
-import { FotmobLink } from "./FotmobLink";
+import { GameLink } from "./GameLink";
 import { PriceGapList, type GapState } from "./PriceGaps";
 import { T } from "./theme";
 
@@ -26,8 +28,8 @@ const pct = (n: number, digits = 0) => `${(n * 100).toFixed(digits)}%`;
 const signedPct = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th"}`;
 
-const kickoff = (settlesAt: string) =>
-  new Date(kickoffOf(settlesAt)).toLocaleString("en-US", {
+const kickoff = (settlesAt: string, league: string) =>
+  new Date(kickoffOf(settlesAt, league)).toLocaleString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -44,7 +46,7 @@ const inScope = (l: RecommendedLeg, frame: TimeWindow, leagues: Set<ScanLeague>,
   if (frame === "futures") return !!l.futures;
   if (l.futures) return false;
   const { from, to } = windowRange(frame, now);
-  const k = kickoffOf(l.settlesAt);
+  const k = kickoffOf(l.settlesAt, l.league);
   return k >= from && k < to;
 };
 
@@ -107,13 +109,27 @@ function TimeSlider({ value, onChange }: { value: TimeWindow; onChange: (w: Time
 
 /** Leagues the viewer has X'd out, remembered in this browser. */
 const EXCLUDED_LEAGUES_STORAGE = "mcvindle_bet_excluded_leagues";
+const SPORT_STORAGE = "mcvindle_bet_scan_sport";
+
+const SPORTS: { id: ScanSport; label: string }[] = [
+  { id: "soccer", label: "Soccer" },
+  { id: "basketball", label: "Basketball" },
+];
 
 /**
  * League chips: every league starts in; tap one to X it out (struck through), tap again to
  * bring it back. The last league left can't be removed.
  */
-function LeaguePicker({ value, onChange }: { value: Set<ScanLeague>; onChange: (next: Set<ScanLeague>) => void }) {
-  const excluded = SCAN_LEAGUES.filter((l) => !value.has(l));
+function LeaguePicker({
+  options,
+  value,
+  onChange,
+}: {
+  options: readonly ScanLeague[];
+  value: Set<ScanLeague>;
+  onChange: (next: Set<ScanLeague>) => void;
+}) {
+  const excluded = options.filter((l) => !value.has(l));
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-2">
@@ -121,7 +137,7 @@ function LeaguePicker({ value, onChange }: { value: Set<ScanLeague>; onChange: (
         {excluded.length > 0 && (
           <button
             type="button"
-            onClick={() => onChange(new Set(SCAN_LEAGUES))}
+            onClick={() => onChange(new Set(options))}
             className="text-[11px] text-[#F5F7F4]/60 hover:text-white"
           >
             Reset ({excluded.length} out)
@@ -129,7 +145,7 @@ function LeaguePicker({ value, onChange }: { value: Set<ScanLeague>; onChange: (
         )}
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {SCAN_LEAGUES.map((league) => {
+        {options.map((league) => {
           const on = value.has(league);
           const last = on && value.size === 1;
           return (
@@ -281,15 +297,20 @@ export function Scanner({
   const [wager, setWager] = useState(String(DEFAULT_WAGER));
   const [logged, setLogged] = useState<string | null>(null);
   const [frame, setFrame] = useState<TimeWindow>("week");
-  const [leagues, setLeagues] = useState<Set<ScanLeague>>(() => new Set(SCAN_LEAGUES));
-  // Restore X'd-out leagues after mount (localStorage isn't readable during the server render).
+  /** Every league left in, across both sports; a scan covers the current sport's share. */
+  const [picked, setPicked] = useState<Set<ScanLeague>>(() => new Set(SCAN_LEAGUES));
+  const [sport, setSport] = useState<ScanSport>("soccer");
+  const sportLeagues = leaguesOfSport(sport);
+  const leagues = new Set(sportLeagues.filter((l) => picked.has(l)));
+  // Restore X'd-out leagues and the sport after mount (localStorage isn't readable during the server render).
   useEffect(() => {
     const restore = setTimeout(() => {
       try {
+        if (localStorage.getItem(SPORT_STORAGE) === "basketball") setSport("basketball");
         const saved = JSON.parse(localStorage.getItem(EXCLUDED_LEAGUES_STORAGE) ?? "[]") as unknown;
         const out = new Set(Array.isArray(saved) ? saved : []);
         const kept = SCAN_LEAGUES.filter((l) => !out.has(l));
-        if (kept.length && kept.length < SCAN_LEAGUES.length) setLeagues(new Set(kept));
+        if (kept.length && kept.length < SCAN_LEAGUES.length) setPicked(new Set(kept));
       } catch {
         // Nothing saved, or storage blocked: every league stays in.
       }
@@ -371,9 +392,9 @@ export function Scanner({
             <Radar className="size-5 text-(--accent)" />
           </span>
           <div>
-            <h2 className="font-kalshi-bold text-lg">AI Soccer Scanner</h2>
+            <h2 className="font-kalshi-bold text-lg">AI {sport === "basketball" ? "Basketball" : "Soccer"} Scanner</h2>
             <p className={cn("text-sm", T.muted)}>
-              Covers {SCAN_LEAGUES.slice(0, -1).join(", ")}, and {SCAN_LEAGUES.at(-1)} on Kalshi. AI Picks researches
+              Covers {sportLeagues.slice(0, -1).join(", ")}, and {sportLeagues.at(-1)} on Kalshi. AI Picks researches
               the 15 clearest favorites and keeps the ones the AI rates 60%+ to win with real confidence. Deep-check any
               pick before you bet it. Season-long title races live in the Waiting Game.
             </p>
@@ -410,6 +431,31 @@ export function Scanner({
             ))}
           </div>
         </div>
+        <div role="radiogroup" aria-label="Sport" className="grid grid-cols-2 gap-1 rounded-xl border border-[#1E2638] bg-[#050D0A] p-1">
+          {SPORTS.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={sport === id}
+              onClick={() => {
+                setSport(id);
+                setLogged(null);
+                try {
+                  localStorage.setItem(SPORT_STORAGE, id);
+                } catch {
+                  // Private mode: the choice lasts for this visit.
+                }
+              }}
+              className={cn(
+                "rounded-lg px-2 py-2 text-xs font-semibold transition-colors",
+                sport === id ? "bg-(--accent) text-[#050D0A]" : "text-[#F5F7F4]/60 hover:text-white"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <TimeSlider
           value={frame}
           onChange={(w) => {
@@ -419,12 +465,14 @@ export function Scanner({
           }}
         />
         <LeaguePicker
+          options={sportLeagues}
           value={leagues}
           onChange={(next) => {
-            setLeagues(next);
+            const all = new Set([...picked].filter((l) => !sportLeagues.includes(l)).concat([...next]));
+            setPicked(all);
             setLogged(null);
             try {
-              localStorage.setItem(EXCLUDED_LEAGUES_STORAGE, JSON.stringify(SCAN_LEAGUES.filter((l) => !next.has(l))));
+              localStorage.setItem(EXCLUDED_LEAGUES_STORAGE, JSON.stringify(SCAN_LEAGUES.filter((l) => !all.has(l))));
             } catch {
               // Private mode: the choice lasts for this visit.
             }
@@ -453,10 +501,10 @@ export function Scanner({
         {loading && (
           <p className={cn("text-xs", T.muted)}>
             Full-market analysis: every active {frame === "futures" ? "title market" : "fixture"} in{" "}
-            {leagues.size === SCAN_LEAGUES.length
-              ? "all leagues"
-              : leagues.size >= SCAN_LEAGUES.length - 3
-                ? `all leagues except ${SCAN_LEAGUES.filter((l) => !leagues.has(l)).join(", ")}`
+            {leagues.size === sportLeagues.length
+              ? `all ${sport} leagues`
+              : leagues.size >= sportLeagues.length - 3 && sportLeagues.length > 4
+                ? `all leagues except ${sportLeagues.filter((l) => !leagues.has(l)).join(", ")}`
                 : [...leagues].join(", ")} for {windowLabel.toLowerCase()} is
             priced against the sharp books, then the 15 best candidates are researched against your Bet Vault record.
             Usually under a minute.
@@ -584,10 +632,10 @@ export function Scanner({
                       <div className="min-w-0 flex-1">
                         <p className="font-kalshi-bold truncate text-sm">{l.leg.market}</p>
                         <p className={cn("truncate text-[11px]", T.muted)}>
-                          {l.leg.matchup} · {l.league} · {l.futures ? seasonEnd(l.settlesAt) : kickoff(l.settlesAt)}
+                          {l.leg.matchup} · {l.league} · {l.futures ? seasonEnd(l.settlesAt) : kickoff(l.settlesAt, l.league)}
                         </p>
                       </div>
-                      {!l.futures && <FotmobLink matchup={l.leg.matchup} kickoff={l.kickoffTime} className="mt-0.5" />}
+                      {!l.futures && <GameLink leg={l.leg} kickoff={l.kickoffTime} className="mt-0.5" />}
                       <span
                         className={cn(
                           "font-kalshi-bold shrink-0 rounded-full border px-2 py-0.5 text-[10px]",

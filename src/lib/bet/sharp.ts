@@ -1,5 +1,5 @@
 import { kalshiFee } from "@/lib/bet/engine";
-import type { SoccerCandidate } from "@/lib/bet/kalshi-api";
+import type { ScanCandidate } from "@/lib/bet/kalshi-api";
 import { bookLines } from "@/lib/bet/odds-api";
 import { kickoffOf } from "@/lib/bet/scan-scope";
 import type { SharpLine } from "@/types/bet";
@@ -9,7 +9,7 @@ import type { SharpLine } from "@/types/bet";
  * probability, and how far Kalshi's ask sits below it after Kalshi's taker fee. Futures have
  * no book line. `configured` is false without ODDS_API_KEY.
  */
-export const sharpLines = async (candidates: SoccerCandidate[]): Promise<{ configured: boolean; lines: Map<string, SharpLine> }> => {
+export const sharpLines = async (candidates: ScanCandidate[]): Promise<{ configured: boolean; lines: Map<string, SharpLine> }> => {
   const matches = candidates.filter((c) => !c.futures && c.leg.ticker && c.leg.price !== null);
   const { configured, lines } = await bookLines(
     matches.map((c) => ({
@@ -17,7 +17,7 @@ export const sharpLines = async (candidates: SoccerCandidate[]): Promise<{ confi
       matchup: c.leg.matchup,
       pick: c.leg.pick,
       side: "yes",
-      startsAt: new Date(kickoffOf(c.settlesAt)).toISOString(),
+      startsAt: new Date(kickoffOf(c.settlesAt, c.league)).toISOString(),
     }))
   );
   const out = new Map<string, SharpLine>();

@@ -11,7 +11,7 @@ import { legTiming, slipTiming, timingTickers, type LegTiming, type SlipTiming }
 import { cn } from "@/lib/utils";
 import type { BetLeg, BetRecord, BetSlip, LegResult, Outcome } from "@/types/bet";
 
-import { FotmobLink } from "./FotmobLink";
+import { GameLink } from "./GameLink";
 import { SlipReader } from "./SlipReader";
 import { T } from "./theme";
 
@@ -125,11 +125,11 @@ function LegFinish({ leg, live, now }: { leg: BetLeg; live: Record<string, LegTi
   );
 }
 
-/** The FotMob "Game" button for an open soccer leg, timed by Kalshi's latest start time. */
+/** The live "Game" button for an open leg, timed by Kalshi's latest start time. */
 function LegGame({ leg, live }: { leg: BetLeg; live: Record<string, LegTiming> }) {
-  if (leg.sport !== "Soccer" || (leg.result && leg.result !== "PENDING")) return null;
+  if (leg.result && leg.result !== "PENDING") return null;
   const startsAt = (leg.ticker && live[leg.ticker]?.startsAt) || leg.startsAt;
-  return startsAt ? <FotmobLink matchup={leg.matchup} kickoff={startsAt} /> : null;
+  return startsAt ? <GameLink leg={leg} kickoff={startsAt} /> : null;
 }
 
 const verdictColor = (verdict: string) =>

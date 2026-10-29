@@ -18,7 +18,8 @@ const FACTS_TTL = 3 * 60 * 60;
 /** Lineups are published about an hour before kickoff; only ask inside this window. */
 const LINEUP_WINDOW_MS = 90 * 60 * 1000;
 
-const LEAGUE_IDS: Record<ScanLeague, number> = {
+/** Soccer leagues only; basketball has no API-Football data. */
+const LEAGUE_IDS: Partial<Record<ScanLeague, number>> = {
   "Premier League": 39,
   "La Liga": 140,
   "Serie A": 135,
@@ -149,7 +150,7 @@ const STANDINGS_TTL = 6 * 60 * 60;
  * conferences (MLS) rank each team within its own. Null when unavailable on the plan.
  */
 export const standings = async (league: ScanLeague, at = new Date()): Promise<Map<string, TableSpot> | null> => {
-  if (!footballConfigured()) return null;
+  if (!footballConfigured() || !LEAGUE_IDS[league]) return null;
   const data = await get<ApiStandingsLeague>(`/standings?league=${LEAGUE_IDS[league]}&season=${seasonOf(league, at)}`, STANDINGS_TTL);
   const groups = data?.[0]?.league?.standings ?? [];
   const table = new Map<string, TableSpot>();
@@ -194,7 +195,7 @@ export interface FootballFacts {
  * key isn't set, or today's request budget is spent. Costs at most 4 requests (fewer cached).
  */
 export const footballFacts = async (league: ScanLeague, matchup: string, kickoffIso: string): Promise<FootballFacts | null> => {
-  if (!footballConfigured()) return null;
+  if (!footballConfigured() || !LEAGUE_IDS[league]) return null;
   const kickoff = new Date(kickoffIso);
   if (!Number.isFinite(kickoff.getTime())) return null;
   const teams = matchup.split(/\s+(?:vs\.?|v\.?|@|at)\s+/i).map((t) => t.trim());

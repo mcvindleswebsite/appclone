@@ -1,6 +1,6 @@
 import { checkAccess } from "@/lib/bet/access";
-import { soccerCandidates } from "@/lib/bet/kalshi-api";
-import { isScanLeague, kickoffOf, SCAN_LEAGUES } from "@/lib/bet/scan-scope";
+import { scanCandidates } from "@/lib/bet/kalshi-api";
+import { isScanLeague, kickoffOf, SOCCER_SCAN_LEAGUES } from "@/lib/bet/scan-scope";
 import { sharpLines } from "@/lib/bet/sharp";
 import type { PriceGap } from "@/types/bet";
 
@@ -15,7 +15,8 @@ const LOOKAHEAD_MS = 3 * 24 * 60 * 60 * 1000;
 /**
  * Price-gap alerts (no AI): upcoming matches where Kalshi's ask is below the sharp books'
  * de-vigged price by ALERT_EDGE or more after Kalshi's fee — usually Kalshi lagging a move
- * at the books. Body: `{ leagues?: ScanLeague[] }`.
+ * at the books. Body: `{ leagues?: ScanLeague[] }`; soccer only by default, so background
+ * polling doesn't spend the odds feed's credits on four more sports.
  */
 export async function POST(request: Request) {
   const denied = checkAccess(request);
@@ -24,17 +25,17 @@ export async function POST(request: Request) {
   const leagues = Array.isArray(body.leagues) ? body.leagues.filter(isScanLeague) : [];
   const now = Date.now();
   try {
-    const candidates = await soccerCandidates({
+    const candidates = await scanCandidates({
       window: "week",
       from: now,
       to: now + LOOKAHEAD_MS,
-      leagues: leagues.length ? leagues : [...SCAN_LEAGUES],
+      leagues: leagues.length ? leagues : [...SOCCER_SCAN_LEAGUES],
     });
     const { configured, lines } = await sharpLines(candidates);
     const gaps: PriceGap[] = candidates.flatMap((c) => {
       const sharp = c.leg.ticker ? lines.get(c.leg.ticker) : undefined;
       if (!sharp || sharp.edge < ALERT_EDGE || c.leg.price === null) return [];
-      return [{ leg: c.leg, league: c.league, kickoffTime: new Date(kickoffOf(c.settlesAt)).toISOString(), ask: c.leg.price, sharp }];
+      return [{ leg: c.leg, league: c.league, kickoffTime: new Date(kickoffOf(c.settlesAt, c.league)).toISOString(), ask: c.leg.price, sharp }];
     });
     return Response.json({ configured, gaps: gaps.sort((a, b) => b.sharp.edge - a.sharp.edge).slice(0, 12), at: new Date().toISOString() });
   } catch {

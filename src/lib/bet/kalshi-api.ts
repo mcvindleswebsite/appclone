@@ -1,6 +1,6 @@
 import { extractTickers, splitLinks } from "@/lib/bet/kalshi-link";
 import { detectSport } from "@/lib/bet/parse-slip";
-import type { ScanLeague, ScanScope } from "@/lib/bet/scan-scope";
+import { kickoffOf, type ScanLeague, type ScanScope } from "@/lib/bet/scan-scope";
 import { estimateTiming, type LegTiming } from "@/lib/bet/timing";
 import type { BetLeg, KalshiImport, KalshiMarketOption, KalshiSlipImport, LegResult } from "@/types/bet";
 
@@ -358,29 +358,34 @@ export const resolveClosingLines = async (tickers: string[]): Promise<Record<str
   return out;
 };
 
-/* ------------------------------ Soccer scanner ----------------------------- */
+/* ------------------------------- Pick scanner ------------------------------ */
 
 /**
- * Kalshi series for the leagues the scanner covers: match winners, plus the season-long
- * title market where Kalshi lists one (the Saudi Pro League has none yet).
+ * Kalshi series for the leagues the scanner covers: game winners, plus the season-long
+ * title market where Kalshi lists one (the Saudi Pro League, WNBA, and EuroLeague have none
+ * open). `sport` is the leg's sport label, as the slip parser names it.
  */
-export const SOCCER_LEAGUES: { series: string; futures: string | null; name: ScanLeague }[] = [
-  { series: "KXEPLGAME", futures: "KXPREMIERLEAGUE", name: "Premier League" },
-  { series: "KXLALIGAGAME", futures: "KXLALIGA", name: "La Liga" },
-  { series: "KXSERIEAGAME", futures: "KXSERIEA", name: "Serie A" },
-  { series: "KXBUNDESLIGAGAME", futures: "KXBUNDESLIGA", name: "Bundesliga" },
-  { series: "KXLIGUE1GAME", futures: "KXLIGUE1", name: "Ligue 1" },
-  { series: "KXUCLGAME", futures: "KXUCL", name: "Champions League" },
-  { series: "KXUELGAME", futures: "KXUEL", name: "Europa League" },
-  { series: "KXMLSGAME", futures: "KXMLSCUP", name: "MLS" },
-  { series: "KXSAUDIPLGAME", futures: null, name: "Saudi Pro League" },
+export const SCAN_SERIES: { series: string; futures: string | null; name: ScanLeague; sport: string }[] = [
+  { series: "KXEPLGAME", futures: "KXPREMIERLEAGUE", name: "Premier League", sport: "Soccer" },
+  { series: "KXLALIGAGAME", futures: "KXLALIGA", name: "La Liga", sport: "Soccer" },
+  { series: "KXSERIEAGAME", futures: "KXSERIEA", name: "Serie A", sport: "Soccer" },
+  { series: "KXBUNDESLIGAGAME", futures: "KXBUNDESLIGA", name: "Bundesliga", sport: "Soccer" },
+  { series: "KXLIGUE1GAME", futures: "KXLIGUE1", name: "Ligue 1", sport: "Soccer" },
+  { series: "KXUCLGAME", futures: "KXUCL", name: "Champions League", sport: "Soccer" },
+  { series: "KXUELGAME", futures: "KXUEL", name: "Europa League", sport: "Soccer" },
+  { series: "KXMLSGAME", futures: "KXMLSCUP", name: "MLS", sport: "Soccer" },
+  { series: "KXSAUDIPLGAME", futures: null, name: "Saudi Pro League", sport: "Soccer" },
+  { series: "KXNBAGAME", futures: "KXNBA", name: "NBA", sport: "NBA" },
+  { series: "KXNCAAMBGAME", futures: "KXMARMAD", name: "College Basketball", sport: "NCAAB" },
+  { series: "KXWNBAGAME", futures: null, name: "WNBA", sport: "WNBA" },
+  { series: "KXEUROLEAGUEGAME", futures: null, name: "EuroLeague", sport: "EuroLeague" },
 ];
 
-export interface SoccerCandidate {
+export interface ScanCandidate {
   leg: BetLeg;
   league: string;
   eventTicker: string;
-  /** Kalshi's expected settlement time (roughly two hours after kickoff; season end for futures). */
+  /** Kalshi's expected settlement time (2-3 hours after kickoff, by sport; season end for futures). */
   settlesAt: string;
   volume: number;
   /** A season-long title market rather than a single match. */
@@ -405,22 +410,22 @@ const FUTURES_CONTENDERS = 3;
  * when it has a live two-sided quote and isn't a near-lock. For the Waiting Game: each
  * league's top title contenders priced 10¢ or more.
  */
-export const soccerCandidates = async (scope: ScanScope): Promise<SoccerCandidate[]> => {
+export const scanCandidates = async (scope: ScanScope): Promise<ScanCandidate[]> => {
   const now = Date.now();
   const futures = scope.window === "futures";
-  // Not started yet (settlement ~2h after kickoff), and never past the lookahead cap.
+  // Not started yet, and never past the lookahead cap.
   const from = Math.max(scope.from, now + 0.5 * HOUR);
   const to = Math.min(scope.to, now + MAX_MATCH_DAYS * 24 * HOUR);
-  const leagues = SOCCER_LEAGUES.filter((l) => scope.leagues.includes(l.name) && (!futures || l.futures));
+  const leagues = SCAN_SERIES.filter((l) => scope.leagues.includes(l.name) && (!futures || l.futures));
   const perLeague = await Promise.all(
-    leagues.map(async ({ series, futures: futuresSeries, name }) => {
+    leagues.map(async ({ series, futures: futuresSeries, name, sport }) => {
       const data = await get<{ events: ApiEvent[] }>(
         `/events?series_ticker=${futures ? futuresSeries : series}&status=open&with_nested_markets=true&limit=200`
       ).catch(() => null);
-      return (data?.events ?? []).flatMap((event): SoccerCandidate[] => {
+      return (data?.events ?? []).flatMap((event): ScanCandidate[] => {
         const teams = (event.markets ?? []).filter((m) => m.status === "active" && !/^tie/i.test(m.yes_sub_title ?? m.title));
         const ranked = teams.sort((a, b) => (cents(b.yes_ask_dollars) ?? 0) - (cents(a.yes_ask_dollars) ?? 0));
-        return ranked.slice(0, futures ? FUTURES_CONTENDERS : 1).flatMap((market): SoccerCandidate[] => {
+        return ranked.slice(0, futures ? FUTURES_CONTENDERS : 1).flatMap((market): ScanCandidate[] => {
           const ask = cents(market.yes_ask_dollars);
           const bid = cents(market.yes_bid_dollars);
           const settles = Date.parse(market.expected_expiration_time ?? "");
@@ -429,13 +434,13 @@ export const soccerCandidates = async (scope: ScanScope): Promise<SoccerCandidat
           if (futures) {
             if (settles < now || ask < 10) return [];
           } else {
-            const kickoff = settles - 2 * HOUR;
+            const kickoff = kickoffOf(new Date(settles).toISOString(), name);
             if (kickoff < from || kickoff > to) return [];
           }
           const volume = Number(market.volume_fp ?? 0);
           return [
             {
-              leg: { ...toLeg(market, event, "yes"), sport: "Soccer" },
+              leg: { ...toLeg(market, event, "yes"), sport },
               league: name,
               eventTicker: event.event_ticker,
               settlesAt: new Date(settles).toISOString(),
