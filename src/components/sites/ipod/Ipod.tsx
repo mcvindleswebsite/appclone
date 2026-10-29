@@ -1,5 +1,6 @@
 "use client";
 
+import { SecretInbox } from "@/components/sites/inbox/SecretInbox";
 import { profile } from "@/data/profile";
 
 import { AudioProvider } from "./audio-context";
@@ -15,7 +16,7 @@ const Shell = () => {
 
   return (
     <div className={styles.shell} style={{ background: DEVICE_THEMES[deviceTheme].body }}>
-      <div className={styles.screen}>
+      <div className={styles.screen} data-ipod-screen>
         <ViewManager />
       </div>
       <div className={styles.wheelContainer}>
@@ -56,6 +57,7 @@ export const Ipod = () => {
         <IpodProvider prefersDark={prefersDark}>
           <AudioProvider>
             <Shell />
+            <SecretInbox />
           </AudioProvider>
         </IpodProvider>
       )}
