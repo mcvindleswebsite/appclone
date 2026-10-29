@@ -148,7 +148,6 @@ const NowPlayingView = () => {
 
 const aboutOptions: ListOption[] = [
   { type: "link", label: "Email", sublabel: "vincent@mcvindle.com", url: "mailto:vincent@mcvindle.com" },
-  { type: "link", label: "Phone", sublabel: "(909) 771-9891", url: "tel:9097719891" },
 ];
 
 /** 1.0.<commit count>, computed at build time in next.config.ts. */

@@ -2,8 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 const title = "Vincent Velasco (@mcvindle)";
-const description =
-  "Vincent Velasco's portfolio, built as an iPod Classic: favorite songs, games, and links to Instagram and TikTok.";
+const description = "my ipod";
 
 export const metadata: Metadata = {
   title,
