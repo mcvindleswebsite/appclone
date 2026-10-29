@@ -20,6 +20,8 @@ interface ChunkCardProps {
   currentTime: number;
   /** Whether clicking plays from here (false when only a BandLab player or nothing is linked). */
   seekable: boolean;
+  /** The admin's tools: AI assist, timing, and chunk labels. The editor login only writes lines. */
+  fullEditor: boolean;
   onSelect: () => void;
   onChange: (chunk: LyricChunk) => void;
   onAssist: (direction: string) => Promise<string | null>;
@@ -30,7 +32,20 @@ interface ChunkCardProps {
  * Clicking it seeks the player there and plays (when seekable); for the admin it also opens the editor:
  * parody lines, syllable counts, per-line timestamps, and the AI assist.
  */
-export function ChunkCard({ chunk, offset, admin, editing, showOriginal, activeLine, currentTime, seekable, onSelect, onChange, onAssist }: ChunkCardProps) {
+export function ChunkCard({
+  chunk,
+  offset,
+  admin,
+  editing,
+  showOriginal,
+  activeLine,
+  currentTime,
+  seekable,
+  fullEditor,
+  onSelect,
+  onChange,
+  onAssist,
+}: ChunkCardProps) {
   const [direction, setDirection] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -91,30 +106,32 @@ export function ChunkCard({ chunk, offset, admin, editing, showOriginal, activeL
 
       {editing && (
         <div onClick={(e) => e.stopPropagation()} className="cursor-default space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              list="lyrics-chunk-labels"
-              value={chunk.label}
-              onChange={(e) => onChange({ ...chunk, label: e.target.value.slice(0, 40) })}
-              className="lx-input w-36"
-              aria-label="Chunk label"
-            />
-            <datalist id="lyrics-chunk-labels">
-              {LABELS.map((l) => (
-                <option key={l} value={l} />
-              ))}
-            </datalist>
-            <span className="lx-sub text-xs">Sync</span>
-            <button type="button" onClick={() => shift(-0.5)} className="lx-chip" aria-label="Shift chunk earlier">
-              <Minus className="size-3" /> 0.5s
-            </button>
-            <button type="button" onClick={() => shift(0.5)} className="lx-chip" aria-label="Shift chunk later">
-              <Plus className="size-3" /> 0.5s
-            </button>
-            <button type="button" onClick={stampStart} className="lx-chip" title="Move this chunk so it starts at the player's current time">
-              <Clock className="size-3" /> Start at {formatTime(currentTime)}
-            </button>
-          </div>
+          {fullEditor && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                list="lyrics-chunk-labels"
+                value={chunk.label}
+                onChange={(e) => onChange({ ...chunk, label: e.target.value.slice(0, 40) })}
+                className="lx-input w-36"
+                aria-label="Chunk label"
+              />
+              <datalist id="lyrics-chunk-labels">
+                {LABELS.map((l) => (
+                  <option key={l} value={l} />
+                ))}
+              </datalist>
+              <span className="lx-sub text-xs">Sync</span>
+              <button type="button" onClick={() => shift(-0.5)} className="lx-chip" aria-label="Shift chunk earlier">
+                <Minus className="size-3" /> 0.5s
+              </button>
+              <button type="button" onClick={() => shift(0.5)} className="lx-chip" aria-label="Shift chunk later">
+                <Plus className="size-3" /> 0.5s
+              </button>
+              <button type="button" onClick={stampStart} className="lx-chip" title="Move this chunk so it starts at the player's current time">
+                <Clock className="size-3" /> Start at {formatTime(currentTime)}
+              </button>
+            </div>
+          )}
 
           <div className="space-y-3">
             {chunk.lines.map((line, i) => {
@@ -141,54 +158,68 @@ export function ChunkCard({ chunk, offset, admin, editing, showOriginal, activeL
                     >
                       {line.parody ? got : "–"}
                     </span>
-                    <input
-                      type="number"
-                      step={0.1}
-                      min={0}
-                      value={line.time ?? ""}
-                      onChange={(e) => setLine(i, { time: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })}
-                      className="lx-input w-20 shrink-0 tabular-nums"
-                      aria-label="Line time in seconds"
-                      placeholder="sec"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setLine(i, { time: Math.max(0, Math.round((currentTime - offset) * 10) / 10) })}
-                      className="lx-chip shrink-0"
-                      title="Stamp this line at the player's current time"
-                      aria-label="Stamp line at current time"
-                    >
-                      <Clock className="size-3" />
-                    </button>
+                    {fullEditor && (
+                      <>
+                        <input
+                          type="number"
+                          step={0.1}
+                          min={0}
+                          value={line.time ?? ""}
+                          onChange={(e) => setLine(i, { time: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })}
+                          className="lx-input w-20 shrink-0 tabular-nums"
+                          aria-label="Line time in seconds"
+                          placeholder="sec"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setLine(i, { time: Math.max(0, Math.round((currentTime - offset) * 10) / 10) })}
+                          className="lx-chip shrink-0"
+                          title="Stamp this line at the player's current time"
+                          aria-label="Stamp line at current time"
+                        >
+                          <Clock className="size-3" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="lx-screen space-y-2 p-3">
-            <textarea
-              value={direction}
-              onChange={(e) => setDirection(e.target.value.slice(0, 1000))}
-              rows={2}
-              placeholder="Extra direction for this chunk only (optional): e.g. this verse is the cat's side of the story"
-              className="lx-input w-full resize-none"
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => void assist()} disabled={busy} className="lx-button px-4 py-1.5 text-sm">
-                {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                AI Parody Assist
-              </button>
-              <button
-                type="button"
-                onClick={() => onChange({ ...chunk, lines: chunk.lines.map((l) => ({ ...l, parody: "" })) })}
-                className="lx-chip"
-              >
-                <Trash2 className="size-3" /> Clear parody
-              </button>
-              {message && <span className="lx-sub text-xs">{message}</span>}
+          {fullEditor ? (
+            <div className="lx-screen space-y-2 p-3">
+              <textarea
+                value={direction}
+                onChange={(e) => setDirection(e.target.value.slice(0, 1000))}
+                rows={2}
+                placeholder="Extra direction for this chunk only (optional): e.g. this verse is the cat's side of the story"
+                className="lx-input w-full resize-none"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => void assist()} disabled={busy} className="lx-button px-4 py-1.5 text-sm">
+                  {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  AI Parody Assist
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...chunk, lines: chunk.lines.map((l) => ({ ...l, parody: "" })) })}
+                  className="lx-chip"
+                >
+                  <Trash2 className="size-3" /> Clear parody
+                </button>
+                {message && <span className="lx-sub text-xs">{message}</span>}
+              </div>
             </div>
-          </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onChange({ ...chunk, lines: chunk.lines.map((l) => ({ ...l, parody: "" })) })}
+              className="lx-chip"
+            >
+              <Trash2 className="size-3" /> Clear parody
+            </button>
+          )}
         </div>
       )}
     </section>

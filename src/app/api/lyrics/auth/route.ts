@@ -1,10 +1,10 @@
-import { checkLyricsAccess } from "@/lib/lyrics/access";
+import { checkLyricsAccess, lyricsRole } from "@/lib/lyrics/access";
 
 export const dynamic = "force-dynamic";
 
-/** Checks the /lyrics admin passcode sent in x-lyrics-key. */
+/** Checks a /lyrics passcode sent in x-lyrics-key and says which login it is. */
 export async function POST(request: Request) {
-  const denied = checkLyricsAccess(request);
+  const denied = await checkLyricsAccess(request, ["admin", "editor"]);
   if (denied) return denied;
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, role: await lyricsRole(request) });
 }

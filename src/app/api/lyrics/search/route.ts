@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 /** Song search for the editor, from the iTunes catalog. */
 export async function GET(request: Request) {
-  const denied = checkLyricsAccess(request);
+  const denied = await checkLyricsAccess(request);
   if (denied) return denied;
   const term = (new URL(request.url).searchParams.get("q") ?? "").trim().slice(0, 120);
   if (!term) return Response.json({ songs: [] });

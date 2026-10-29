@@ -55,7 +55,7 @@ const startsWithDraft = (line: string, draft: string) =>
 
 /** AI Parody Assist: finishes a chunk's parody from the user's partial lines and direction. */
 export async function POST(request: Request) {
-  const denied = checkLyricsAccess(request);
+  const denied = await checkLyricsAccess(request);
   if (denied) return denied;
   if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: "AI not configured" }, { status: 503 });
 

@@ -25,7 +25,12 @@ const errorOf = async (response: Response) =>
 export function LyricsApp() {
   const [theme, setTheme] = useState<Theme>("system");
   const [adminKey, setAdminKey] = useState("");
-  const [admin, setAdmin] = useState(false);
+  /** "admin": everything. "editor" (the second login): writes parody lines and sees syllable counts, no AI. */
+  const [role, setRole] = useState<"admin" | "editor" | null>(null);
+  const admin = role === "admin";
+  const canEdit = role !== null;
+  const [editorSet, setEditorSet] = useState<boolean | null>(null);
+  const [editorPassword, setEditorPassword] = useState("");
   const [gateOpen, setGateOpen] = useState(false);
   const [passcode, setPasscode] = useState("");
   const [gateError, setGateError] = useState<string | null>(null);
@@ -94,10 +99,11 @@ export function LyricsApp() {
     const saved = localStorage.getItem(KEY_STORAGE) ?? "";
     (async () => {
       if (saved) {
-        const ok = (await fetch("/api/lyrics/auth", { method: "POST", headers: { "x-lyrics-key": saved } }).catch(() => null))?.ok;
-        if (ok) {
+        const response = await fetch("/api/lyrics/auth", { method: "POST", headers: { "x-lyrics-key": saved } }).catch(() => null);
+        const ok = !!response?.ok;
+        if (response?.ok) {
           setAdminKey(saved);
-          setAdmin(true);
+          setRole(((await response.json()) as { role: "admin" | "editor" }).role);
         } else localStorage.removeItem(KEY_STORAGE);
         await load(ok ? saved : "");
       } else await load("");
@@ -121,7 +127,7 @@ export function LyricsApp() {
     }
     localStorage.setItem(KEY_STORAGE, passcode);
     setAdminKey(passcode);
-    setAdmin(true);
+    setRole(((await response.json()) as { role: "admin" | "editor" }).role);
     setGateOpen(false);
     setPasscode("");
     await load(passcode);
@@ -130,7 +136,8 @@ export function LyricsApp() {
   const lock = async () => {
     localStorage.removeItem(KEY_STORAGE);
     setAdminKey("");
-    setAdmin(false);
+    setRole(null);
+    setEditorSet(null);
     setEditingChunk(null);
     setSearchOpen(false);
     setActive(null);
@@ -265,12 +272,37 @@ export function LyricsApp() {
       setActive(parody);
       setDirty(false);
       setParodies((list) => [parody, ...list.filter((p) => p.id !== parody.id)]);
-      setStatus(parody.published ? "Saved and published." : "Saved as a draft.");
+      setStatus(!admin ? "Saved." : parody.published ? "Saved and published." : "Saved as a draft.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Couldn't save");
     } finally {
       setSaving(false);
     }
+  };
+
+  // The admin sees whether the editor login is on.
+  useEffect(() => {
+    if (!admin) return;
+    void fetch("/api/lyrics/editor", { headers })
+      .then((r) => (r.ok ? (r.json() as Promise<{ set: boolean }>) : null))
+      .then((d) => d && setEditorSet(d.set))
+      .catch(() => null);
+  }, [admin, headers]);
+
+  const setEditorLogin = async (event: React.FormEvent | null, off = false) => {
+    event?.preventDefault();
+    const response = await fetch("/api/lyrics/editor", {
+      method: off ? "DELETE" : "PUT",
+      headers,
+      ...(off ? {} : { body: JSON.stringify({ password: editorPassword }) }),
+    }).catch(() => null);
+    if (!response?.ok) {
+      setStatus(response ? await errorOf(response) : "Network error");
+      return;
+    }
+    setEditorSet(!off);
+    setEditorPassword("");
+    setStatus(off ? "Editor login turned off." : "Editor password set.");
   };
 
   const remove = async () => {
@@ -336,7 +368,7 @@ export function LyricsApp() {
       <button
         type="button"
         aria-label="Admin"
-        onClick={() => !admin && setGateOpen(true)}
+        onClick={() => !canEdit && setGateOpen(true)}
         className="fixed right-0 top-0 z-50 size-10 cursor-default opacity-0"
       />
 
@@ -353,9 +385,9 @@ export function LyricsApp() {
           <h1 className="truncate text-[14px] font-semibold">{active ? active.song.title : "Vindle Parodies"}</h1>
           <div className="mr-10 flex items-center justify-end gap-3">
             {player.playing && <Play className="lx-accent size-3 fill-current" aria-label="Playing" />}
-            {admin && (
+            {canEdit && (
               <button type="button" onClick={() => void lock()} className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide" aria-label="Lock studio">
-                <Lock className="size-3" /> Studio
+                <Lock className="size-3" /> {admin ? "Studio" : "Editor"}
               </button>
             )}
             <button type="button" onClick={cycleTheme} aria-label={`Theme: ${theme}`} title={`Theme: ${theme}`}>
@@ -367,7 +399,7 @@ export function LyricsApp() {
 
       <main className="mx-auto max-w-5xl px-4 pt-5">
         {status && <p className="lx-screen mb-4 px-3 py-2 text-sm">{status}</p>}
-        {admin && !storage && (
+        {canEdit && !storage && (
           <p className="lx-screen lx-warn mb-4 px-3 py-2 text-sm">Storage isn&apos;t configured (Upstash Redis env vars), so parodies can&apos;t be saved.</p>
         )}
 
@@ -424,6 +456,30 @@ export function LyricsApp() {
                   </div>
                 )}
               </div>
+            )}
+
+            {admin && editorSet !== null && (
+              <form onSubmit={(e) => void setEditorLogin(e)} className="lx-screen mb-5 flex flex-wrap items-center gap-2 p-3">
+                <span className="text-xs font-semibold">
+                  Editor login <span className="lx-sub font-normal">{editorSet ? "· on: can write lyrics, no AI" : "· off"}</span>
+                </span>
+                <input
+                  type="password"
+                  value={editorPassword}
+                  onChange={(e) => setEditorPassword(e.target.value)}
+                  placeholder={editorSet ? "New password" : "Set a password"}
+                  className="lx-input min-w-0 flex-1"
+                  aria-label="Editor password"
+                />
+                <button type="submit" disabled={editorPassword.length < 4} className="lx-chip">
+                  Set
+                </button>
+                {editorSet && (
+                  <button type="button" onClick={() => void setEditorLogin(null, true)} className="lx-chip">
+                    Turn off
+                  </button>
+                )}
+              </form>
             )}
 
             {loading ? (
@@ -558,42 +614,48 @@ export function LyricsApp() {
               </div>
             )}
 
-            {admin && (
+            {canEdit && (
               <div className="lx-bar sticky top-[calc(2.25rem+env(safe-area-inset-top))] z-20 -mx-4 flex flex-wrap items-center gap-3 px-4 py-2">
-                {youtubeRecording && (
-                  <div className="flex overflow-hidden rounded-full border border-(--lx-border) text-xs font-semibold">
-                    {(["original", "parody"] as const).map((v) => (
-                      <button key={v} type="button" onClick={() => setListenTo(v)} data-active={listenTo === v} className="lx-row px-3 py-1">
-                        {v === "original" ? "Original" : "My recording"}
-                      </button>
-                    ))}
-                  </div>
+                {admin && (
+                  <>
+                    {youtubeRecording && (
+                      <div className="flex overflow-hidden rounded-full border border-(--lx-border) text-xs font-semibold">
+                        {(["original", "parody"] as const).map((v) => (
+                          <button key={v} type="button" onClick={() => setListenTo(v)} data-active={listenTo === v} className="lx-row px-3 py-1">
+                            {v === "original" ? "Original" : "My recording"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <label className="flex items-center gap-2 text-xs" title={playingParody ? "Lines up the lyrics with your recording" : "Lines up the lyrics with the original video"}>
+                      {playingParody ? "Recording offset" : "Offset"}
+                      <input
+                        type="range"
+                        min={playingParody ? -60 : -30}
+                        max={playingParody ? 60 : 30}
+                        step={0.1}
+                        value={syncOffset}
+                        onChange={(e) => update(playingParody ? { recordingOffset: Number(e.target.value) } : { offset: Number(e.target.value) })}
+                        className="w-28 accent-[rgb(52,122,181)]"
+                      />
+                      <span className="w-12 tabular-nums">
+                        {syncOffset > 0 ? "+" : ""}
+                        {syncOffset.toFixed(1)}s
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs">
+                      <input type="checkbox" checked={active.published} onChange={(e) => update({ published: e.target.checked })} className="accent-[rgb(52,122,181)]" />
+                      Published
+                    </label>
+                  </>
                 )}
-                <label className="flex items-center gap-2 text-xs" title={playingParody ? "Lines up the lyrics with your recording" : "Lines up the lyrics with the original video"}>
-                  {playingParody ? "Recording offset" : "Offset"}
-                  <input
-                    type="range"
-                    min={playingParody ? -60 : -30}
-                    max={playingParody ? 60 : 30}
-                    step={0.1}
-                    value={syncOffset}
-                    onChange={(e) => update(playingParody ? { recordingOffset: Number(e.target.value) } : { offset: Number(e.target.value) })}
-                    className="w-28 accent-[rgb(52,122,181)]"
-                  />
-                  <span className="w-12 tabular-nums">
-                    {syncOffset > 0 ? "+" : ""}
-                    {syncOffset.toFixed(1)}s
-                  </span>
-                </label>
-                <label className="flex items-center gap-2 text-xs">
-                  <input type="checkbox" checked={active.published} onChange={(e) => update({ published: e.target.checked })} className="accent-[rgb(52,122,181)]" />
-                  Published
-                </label>
                 <div className="ml-auto flex items-center gap-2">
                   {dirty && <span className="lx-warn text-xs font-semibold">Unsaved</span>}
-                  <button type="button" onClick={() => void remove()} className="lx-chip" aria-label="Delete parody">
-                    <Trash2 className="size-3" />
-                  </button>
+                  {admin && (
+                    <button type="button" onClick={() => void remove()} className="lx-chip" aria-label="Delete parody">
+                      <Trash2 className="size-3" />
+                    </button>
+                  )}
                   <button type="button" onClick={() => void save()} disabled={saving} className="lx-button px-4 py-1.5 text-sm">
                     {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Save
                   </button>
@@ -609,14 +671,15 @@ export function LyricsApp() {
                     key={chunk.id}
                     chunk={chunk}
                     offset={active.offset}
-                    admin={admin}
-                    editing={admin && editingChunk === chunk.id}
+                    admin={canEdit}
+                    fullEditor={admin}
+                    editing={canEdit && editingChunk === chunk.id}
                     showOriginal={showOriginal}
                     activeLine={activeLine}
                     currentTime={player.time}
                     seekable={!!source}
                     onSelect={() => {
-                      if (admin) setEditingChunk(chunk.id);
+                      if (canEdit) setEditingChunk(chunk.id);
                       if (source) void player.playAt(chunkStart(chunk, syncOffset) ?? 0);
                     }}
                     onChange={updateChunk}

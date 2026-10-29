@@ -22,7 +22,7 @@ const usable = (r: LrclibTrack | null): r is LrclibTrack =>
  * exact track first, then a search picking the closest duration that has synced lyrics.
  */
 export async function GET(request: Request) {
-  const denied = checkLyricsAccess(request);
+  const denied = await checkLyricsAccess(request);
   if (denied) return denied;
   const params = new URL(request.url).searchParams;
   const track = (params.get("track") ?? "").slice(0, 200);

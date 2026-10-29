@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 /** YouTube videos for a song, best length match first. 503 without YOUTUBE_API_KEY (paste a link instead). */
 export async function GET(request: Request) {
-  const denied = checkLyricsAccess(request);
+  const denied = await checkLyricsAccess(request);
   if (denied) return denied;
   const params = new URL(request.url).searchParams;
   const title = (params.get("title") ?? "").slice(0, 200);
