@@ -4,8 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { YTNamespace, YTPlayer } from "@/types/youtube";
 
-/** "youtube" plays the full track in an embedded video; "preview" plays the 30s iTunes clip. */
-export type Engine = "youtube" | "preview";
+/**
+ * "youtube" plays the full track in an embedded video; "audio" plays a full-length file (a
+ * BandLab recording); "preview" plays the 30s iTunes clip.
+ */
+export type Engine = "youtube" | "audio" | "preview";
 
 const YT_PLAYING = 1;
 let youTubePromise: Promise<YTNamespace> | null = null;
@@ -32,12 +35,14 @@ const loadYouTube = () => {
 };
 
 /**
- * What the player plays: a YouTube video (seekable to any lyric) or, without one, a 30s
- * preview clip. `key` names the source, so switching sources resets the readout.
+ * What the player plays: a YouTube video or a full audio file (both seekable to any lyric) or,
+ * without either, a 30s preview clip. `key` names the source, so switching sources resets the readout.
  */
 export interface TrackSource {
   key: string;
   youtubeId: string | null;
+  /** A full-length audio file, e.g. a BandLab mixdown. */
+  audioUrl?: string | null;
   previewUrl: string | null;
   durationSec: number;
 }
@@ -61,11 +66,12 @@ export const useTrackPlayer = (source: TrackSource | null) => {
   const volumeRef = useRef(0.8);
 
   const youtubeId = source?.youtubeId ?? null;
+  const audioUrl = source?.audioUrl ?? null;
   const previewUrl = source?.previewUrl ?? null;
   const key = source?.key ?? null;
-  const engine: Engine = youtubeId ? "youtube" : "preview";
+  const engine: Engine = youtubeId ? "youtube" : audioUrl ? "audio" : "preview";
 
-  // The preview <audio>, made once on the client.
+  // The <audio> for full files and previews, made once on the client.
   useEffect(() => {
     const el = new Audio();
     el.preload = "metadata";
@@ -93,15 +99,15 @@ export const useTrackPlayer = (source: TrackSource | null) => {
     setDuration(source?.durationSec ?? 0);
   }
 
-  // The preview engine loads its clip here.
+  // The audio and preview engines load their file here.
   useEffect(() => {
     const el = audio.current;
     if (el) {
       el.pause();
-      el.src = !youtubeId && previewUrl ? previewUrl : "";
+      el.src = youtubeId ? "" : (audioUrl ?? previewUrl ?? "");
       el.volume = volumeRef.current;
     }
-  }, [key, youtubeId, previewUrl]);
+  }, [key, youtubeId, audioUrl, previewUrl]);
 
   // The YouTube player, rebuilt when the video changes.
   useEffect(() => {
@@ -167,6 +173,12 @@ export const useTrackPlayer = (source: TrackSource | null) => {
         return;
       }
       const el = audio.current;
+      if (el && audioUrl) {
+        setTime(seconds);
+        el.currentTime = seconds;
+        await el.play().catch(() => setNotice("Tap play to start."));
+        return;
+      }
       if (!el || !previewUrl) {
         setNotice("Nothing to play — this song has no video or preview yet.");
         return;
@@ -176,7 +188,7 @@ export const useTrackPlayer = (source: TrackSource | null) => {
       el.currentTime = 0;
       await el.play().catch(() => setNotice("Tap play to start the preview."));
     },
-    [key, youtubeId, previewUrl]
+    [key, youtubeId, audioUrl, previewUrl]
   );
 
   const toggle = useCallback(async () => {

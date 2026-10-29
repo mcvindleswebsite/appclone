@@ -80,6 +80,15 @@ export interface ParodyAssistRequest {
   context: string;
 }
 
+/** A BandLab recording's playable file, from /api/lyrics/bandlab. */
+export interface BandlabTrack {
+  audio: string;
+  durationSec: number;
+  /** The track's own cover, or null when it uses BandLab's placeholder. */
+  cover: string | null;
+  title: string;
+}
+
 export interface ParodyAssistResponse {
   analysis: { theme: string; rhymeScheme: string; syllables: number[] };
   lines: string[];

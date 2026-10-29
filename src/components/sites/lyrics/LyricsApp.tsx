@@ -1,13 +1,13 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Eye, EyeOff, Loader2, Lock, Monitor, Moon, Music, Play, Plus, Save, Search, Sun, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, EyeOff, Loader2, Lock, Monitor, Moon, Music, Pause, Play, Plus, Save, Search, Sun, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { buildChunks, chunkStart, formatTime } from "@/lib/lyrics/chunks";
 import { bandlabEmbedUrl, parseRecording } from "@/lib/lyrics/recording";
 import { parseYouTubeId } from "@/lib/lyrics/youtube-id";
 import { cn } from "@/lib/utils";
-import type { LyricChunk, LyricsSource, Parody, ParodyAssistResponse, SongMeta, VideoCandidate } from "@/types/lyrics";
+import type { BandlabTrack, LyricChunk, LyricsSource, Parody, ParodyAssistResponse, SongMeta, VideoCandidate } from "@/types/lyrics";
 
 import { ChunkCard } from "./ChunkCard";
 import { MediaBar } from "./MediaBar";
@@ -58,20 +58,50 @@ export function LyricsApp() {
   const [recordingInput, setRecordingInput] = useState("");
   /** In the studio, sync against the original song or preview the parody recording. */
   const [listenTo, setListenTo] = useState<"original" | "parody">("original");
+  /** A BandLab recording's audio file, looked up once per post; `track` null means it couldn't be read. */
+  const [bandlab, setBandlab] = useState<{ id: string; track: BandlabTrack | null } | null>(null);
 
   // Visitors hear only the parody recording; the original song is for syncing in the studio.
   const recording = active?.recording ?? null;
   const youtubeRecording = recording?.kind === "youtube" ? recording.id : null;
+  const bandlabId = recording?.kind === "bandlab" ? recording.id : null;
+  const bandlabLookup = bandlabId && bandlab?.id === bandlabId ? bandlab : null;
+  const bandlabTrack = bandlabLookup?.track ?? null;
+  /** Whether the recording plays through this page's own player (so verses can seek it). */
+  const recordingPlayable = !!youtubeRecording || !!bandlabTrack;
   const playingParody = !admin || listenTo === "parody";
   const syncOffset = !active ? 0 : playingParody ? (active.recordingOffset ?? 0) : active.offset;
   let source: TrackSource | null = null;
   if (active && playingParody && youtubeRecording) {
     source = { key: `parody:${active.id}:${youtubeRecording}`, youtubeId: youtubeRecording, previewUrl: null, durationSec: 0 };
+  } else if (active && playingParody && bandlabTrack) {
+    source = {
+      key: `parody:${active.id}:bandlab:${bandlabId}`,
+      youtubeId: null,
+      audioUrl: bandlabTrack.audio,
+      previewUrl: null,
+      durationSec: bandlabTrack.durationSec,
+    };
   } else if (active && !playingParody) {
     const { song } = active;
     source = { key: `original:${active.id}:${song.youtubeId ?? ""}`, youtubeId: song.youtubeId, previewUrl: song.previewUrl, durationSec: song.durationMs / 1000 };
   }
   const player = useTrackPlayer(source);
+  const cover = bandlabTrack?.cover || active?.song.artwork || null;
+
+  // Looks up a linked BandLab post's audio file; without one the page falls back to BandLab's own player.
+  useEffect(() => {
+    if (!bandlabId || bandlab?.id === bandlabId) return;
+    let cancelled = false;
+    fetch(`/api/lyrics/bandlab?id=${bandlabId}`)
+      .then((r) => (r.ok ? (r.json() as Promise<BandlabTrack>) : null))
+      .catch(() => null)
+      .then((track) => !cancelled && setBandlab({ id: bandlabId, track }));
+    return () => {
+      cancelled = true;
+    };
+  }, [bandlabId, bandlab?.id]);
+
   const headers = useMemo(() => ({ "Content-Type": "application/json", "x-lyrics-key": adminKey }), [adminKey]);
 
   const load = useCallback(async (key: string) => {
@@ -347,9 +377,9 @@ export function LyricsApp() {
     }`;
   };
 
-  // The line playing now; only a YouTube video (not a preview) follows the song's timeline.
+  // The line playing now; only a full track (a video or audio file, not a preview) follows the song's timeline.
   const activeLineId = useMemo(() => {
-    if (!active || !source?.youtubeId || player.time <= 0) return null;
+    if (!active || !(source?.youtubeId || source?.audioUrl) || player.time <= 0) return null;
     let current: string | null = null;
     for (const chunk of active.chunks) {
       for (const line of chunk.lines) {
@@ -357,7 +387,7 @@ export function LyricsApp() {
       }
     }
     return current;
-  }, [active, source?.youtubeId, syncOffset, player.time]);
+  }, [active, source?.youtubeId, source?.audioUrl, syncOffset, player.time]);
 
   const ThemeIcon = THEME_ICON[theme];
   const trackSeconds = active ? Math.round(active.song.durationMs / 1000) : 0;
@@ -524,9 +554,49 @@ export function LyricsApp() {
         {active && (
           <article className="space-y-5">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-end">
-              {active.song.artwork && (
-                // eslint-disable-next-line @next/next/no-img-element -- remote iTunes artwork
-                <img src={active.song.artwork} alt={`${active.song.album} artwork`} className="size-48 shrink-0 object-cover shadow-[0_12px_30px_-12px_rgba(0,0,0,0.5)] sm:size-56" />
+              {/* The recording takes the album art's spot: a YouTube video, or the cover as a play button. */}
+              {playingParody && youtubeRecording ? (
+                <div ref={player.mount} className="aspect-video w-full shrink-0 overflow-hidden rounded-md bg-black sm:w-96" />
+              ) : playingParody && bandlabId && bandlabLookup && !bandlabTrack ? (
+                <iframe
+                  src={bandlabEmbedUrl(bandlabId)}
+                  title={`${active.title} on BandLab`}
+                  allow="autoplay; encrypted-media"
+                  className="size-48 shrink-0 border-0 sm:size-56"
+                />
+              ) : playingParody && bandlabId ? (
+                <button
+                  type="button"
+                  onClick={() => void player.toggle()}
+                  disabled={!bandlabTrack}
+                  aria-label={player.playing ? "Pause the parody" : "Play the parody"}
+                  className="group relative size-48 shrink-0 overflow-hidden shadow-[0_12px_30px_-12px_rgba(0,0,0,0.5)] sm:size-56"
+                >
+                  {cover ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- remote BandLab or iTunes artwork
+                    <img src={cover} alt="" className="size-full object-cover" />
+                  ) : (
+                    <span className="grid size-full place-items-center bg-(--lx-panel) text-white">
+                      <Music className="size-10" />
+                    </span>
+                  )}
+                  <span className="absolute inset-0 grid place-items-center bg-black/10 transition-colors group-hover:bg-black/25">
+                    <span className="grid size-16 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm">
+                      {!bandlabTrack ? (
+                        <Loader2 className="size-7 animate-spin" />
+                      ) : player.playing ? (
+                        <Pause className="size-7 fill-current" />
+                      ) : (
+                        <Play className="size-7 translate-x-0.5 fill-current" />
+                      )}
+                    </span>
+                  </span>
+                </button>
+              ) : (
+                active.song.artwork && (
+                  // eslint-disable-next-line @next/next/no-img-element -- remote iTunes artwork
+                  <img src={active.song.artwork} alt={`${active.song.album} artwork`} className="size-48 shrink-0 object-cover shadow-[0_12px_30px_-12px_rgba(0,0,0,0.5)] sm:size-56" />
+                )
               )}
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="lx-accent text-[11px] font-bold uppercase tracking-[0.12em]">Parody</p>
@@ -618,7 +688,7 @@ export function LyricsApp() {
               <div className="lx-bar sticky top-[calc(2.25rem+env(safe-area-inset-top))] z-20 -mx-4 flex flex-wrap items-center gap-3 px-4 py-2">
                 {admin && (
                   <>
-                    {youtubeRecording && (
+                    {recordingPlayable && (
                       <div className="flex overflow-hidden rounded-full border border-(--lx-border) text-xs font-semibold">
                         {(["original", "parody"] as const).map((v) => (
                           <button key={v} type="button" onClick={() => setListenTo(v)} data-active={listenTo === v} className="lx-row px-3 py-1">
@@ -689,57 +759,42 @@ export function LyricsApp() {
               })}
             </div>
 
-            {(recording || admin) && (
+            {admin && (
               <section className="space-y-3 pt-2">
-                <h3 className="lx-accent text-[11px] font-bold uppercase tracking-[0.12em]">Listen to the parody</h3>
-                {recording?.kind === "youtube" &&
-                  (playingParody ? (
-                    <div ref={player.mount} className="aspect-video w-full max-w-2xl overflow-hidden rounded-md bg-black" />
-                  ) : (
-                    <button type="button" onClick={() => setListenTo("parody")} className="lx-chip">
-                      <Play className="size-3 fill-current" /> Play my recording
+                {recording && !playingParody && (
+                  <button type="button" onClick={() => setListenTo("parody")} className="lx-chip">
+                    <Play className="size-3 fill-current" /> Play my recording
+                  </button>
+                )}
+                <div className="lx-screen space-y-2 p-3">
+                  <p className="text-xs font-semibold">
+                    Your parody recording{" "}
+                    <span className="lx-sub font-normal">
+                      {recording ? `· ${recording.kind === "youtube" ? "YouTube" : "BandLab"}` : "· this is what visitors hear"}
+                    </span>
+                  </p>
+                  <form onSubmit={linkRecording} className="flex flex-wrap gap-2">
+                    <input
+                      value={recordingInput}
+                      onChange={(e) => setRecordingInput(e.target.value)}
+                      placeholder="Paste a YouTube link, a BandLab link, or BandLab's embed code"
+                      className="lx-input min-w-0 flex-1"
+                    />
+                    <button type="submit" className="lx-chip">
+                      Link
                     </button>
-                  ))}
-                {recording?.kind === "bandlab" && (
-                  <iframe
-                    src={bandlabEmbedUrl(recording.id)}
-                    title={`${active.title} on BandLab`}
-                    allow="autoplay; encrypted-media"
-                    allowFullScreen
-                    className="h-[360px] w-full max-w-2xl rounded-md border-0"
-                  />
-                )}
-                {admin && (
-                  <div className="lx-screen space-y-2 p-3">
-                    <p className="text-xs font-semibold">
-                      Your parody recording{" "}
-                      <span className="lx-sub font-normal">
-                        {recording ? `· ${recording.kind === "youtube" ? "YouTube" : "BandLab"}` : "· this is what visitors hear"}
-                      </span>
-                    </p>
-                    <form onSubmit={linkRecording} className="flex flex-wrap gap-2">
-                      <input
-                        value={recordingInput}
-                        onChange={(e) => setRecordingInput(e.target.value)}
-                        placeholder="Paste a YouTube link, a BandLab link, or BandLab's embed code"
-                        className="lx-input min-w-0 flex-1"
-                      />
-                      <button type="submit" className="lx-chip">
-                        Link
+                    {recording && (
+                      <button type="button" onClick={() => update({ recording: null })} className="lx-chip" aria-label="Unlink recording">
+                        <X className="size-3" />
                       </button>
-                      {recording && (
-                        <button type="button" onClick={() => update({ recording: null })} className="lx-chip" aria-label="Unlink recording">
-                          <X className="size-3" />
-                        </button>
-                      )}
-                    </form>
-                    <p className="lx-faint text-[11px]">
-                      {recording?.kind === "bandlab"
-                        ? "BandLab plays in its own player, so visitors can’t tap a verse to jump to it. Use a YouTube upload for that."
-                        : "With a YouTube recording, visitors can tap any verse to jump to it. Switch to My recording above and set the recording offset so the lyrics line up."}
-                    </p>
-                  </div>
-                )}
+                    )}
+                  </form>
+                  <p className="lx-faint text-[11px]">
+                    {recording?.kind === "bandlab" && bandlabLookup && !bandlabTrack
+                      ? "BandLab didn’t share this track’s audio file, so it plays in BandLab’s own player and visitors can’t tap a verse to jump to it. A public or unlisted post usually works."
+                      : "Visitors play it from the cover at the top and can tap any verse to jump to it. Switch to My recording above and set the recording offset so the lyrics line up."}
+                  </p>
+                </div>
               </section>
             )}
           </article>
@@ -773,7 +828,7 @@ export function LyricsApp() {
 
       {active && source && (
         <MediaBar
-          artwork={active.song.artwork || null}
+          artwork={(playingParody ? cover : active.song.artwork) || null}
           title={playingParody ? active.title : active.song.title}
           subtitle={playingParody ? `Parody of ${active.song.title} · ${active.song.artist}` : active.song.artist}
           sourceLabel={playingParody ? "Parody" : active.song.youtubeId ? "Original" : "Preview"}
