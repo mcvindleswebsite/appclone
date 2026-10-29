@@ -721,7 +721,7 @@ export function LyricsApp() {
                       <input
                         value={recordingInput}
                         onChange={(e) => setRecordingInput(e.target.value)}
-                        placeholder="Paste a YouTube link or a BandLab post link"
+                        placeholder="Paste a YouTube link, a BandLab link, or BandLab's embed code"
                         className="lx-input min-w-0 flex-1"
                       />
                       <button type="submit" className="lx-chip">
