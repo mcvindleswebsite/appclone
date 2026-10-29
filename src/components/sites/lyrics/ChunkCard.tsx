@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { chunkStart, countSyllables, formatTime } from "@/lib/lyrics/chunks";
 import { cn } from "@/lib/utils";
-import type { LyricChunk, LyricLine } from "@/types/lyrics";
+import { SYLLABLE_TOLERANCE, type LyricChunk, type LyricLine } from "@/types/lyrics";
 
 const LABELS = ["Intro", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Bridge", "Outro"];
 
@@ -136,7 +136,7 @@ export function ChunkCard({ chunk, offset, admin, editing, showOriginal, activeL
                     <span
                       className={cn(
                         "w-10 shrink-0 text-right text-xs tabular-nums",
-                        !line.parody ? "lx-faint" : Math.abs(got - target) <= 1 ? "lx-accent" : "lx-warn"
+                        !line.parody ? "lx-faint" : Math.abs(got - target) <= SYLLABLE_TOLERANCE ? "lx-accent" : "lx-warn"
                       )}
                     >
                       {line.parody ? got : "–"}

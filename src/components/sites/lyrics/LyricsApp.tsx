@@ -307,7 +307,12 @@ export function LyricsApp() {
     if (!response?.ok) return response ? await errorOf(response) : "Network error";
     const result = (await response.json()) as ParodyAssistResponse;
     updateChunk({ ...chunk, lines: chunk.lines.map((l, i) => ({ ...l, parody: result.lines[i] ?? l.parody })) });
-    return `Theme: ${result.analysis.theme} · Rhyme ${result.analysis.rhymeScheme}`;
+    const unfit = result.unfit ?? [];
+    return `Theme: ${result.analysis.theme} · Rhyme ${result.analysis.rhymeScheme}${
+      unfit.length
+        ? ` · Line${unfit.length > 1 ? "s" : ""} ${unfit.map((i) => i + 1).join(", ")} couldn't fit the syllable count, so ${unfit.length > 1 ? "they were" : "it was"} left for you. Try again, or write a few words to steer it.`
+        : ""
+    }`;
   };
 
   // The line playing now; only a YouTube video (not a preview) follows the song's timeline.

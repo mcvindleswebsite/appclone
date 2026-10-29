@@ -83,9 +83,13 @@ export interface ParodyAssistRequest {
 export interface ParodyAssistResponse {
   analysis: { theme: string; rhymeScheme: string; syllables: number[] };
   lines: string[];
+  /** Lines (0-based) the AI couldn't fit to the syllable count; they're left as the user's draft. */
+  unfit: number[];
 }
 
 export const MAX_CHUNKS = 60;
 export const MAX_LINES_PER_CHUNK = 40;
 export const MAX_LINE_CHARS = 300;
 export const MAX_BRIEF_CHARS = 2000;
+/** How far a parody line's syllable count may sit from the original's and still fit (the studio shows it green). */
+export const SYLLABLE_TOLERANCE = 1;

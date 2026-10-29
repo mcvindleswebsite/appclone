@@ -2,7 +2,14 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import { checkLyricsAccess } from "@/lib/lyrics/access";
 import { countSyllables } from "@/lib/lyrics/chunks";
-import { MAX_BRIEF_CHARS, MAX_LINE_CHARS, MAX_LINES_PER_CHUNK, type ParodyAssistRequest, type ParodyAssistResponse } from "@/types/lyrics";
+import {
+  MAX_BRIEF_CHARS,
+  MAX_LINE_CHARS,
+  MAX_LINES_PER_CHUNK,
+  SYLLABLE_TOLERANCE,
+  type ParodyAssistRequest,
+  type ParodyAssistResponse,
+} from "@/types/lyrics";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -15,13 +22,16 @@ export const maxDuration = 60;
 const MODEL = "claude-haiku-5-5";
 /** Short on purpose: just enough to finish one chunk. */
 const MAX_TOKENS = 250;
+/** Extra rounds for lines that miss their syllable count, each told exactly how far off it was. */
+const FIT_RETRIES = 2;
 
 const SYSTEM = `You are a creative song parody writer. Analyze the provided original verse for rhyme scheme, meter, and syllable count. Complete the user's partial lines or draft the rest of the verse matching their comedic theme.
 
 You get one chunk of a song (a verse, chorus, or bridge): its original lines with syllable counts, and the user's draft parody lines, some full, some partial, some empty. Give the theme in a few words and the rhyme scheme as letters (e.g. AABB). The parody must be singable over the original melody:
 - Return exactly one parody line per original line, in order.
 - Keep every word the user already wrote. A drafted line stays as written; a partial line must begin with the user's exact text and you finish it.
-- Match each original line's syllable count (within one) and its rhyme scheme.
+- Each line must have exactly the syllable count shown for its original line, so it fits the melody. Count every syllable before you answer: the app counts them and throws out any line that misses.
+- Match the original's rhyme scheme.
 - Follow what the parody is about (the user's description of the whole song), any extra direction for this chunk, and the theme their drafts establish. Make it funny and specific, not generic.
 - Write new lyrics only; never reuse more than a short phrase of the original lines.`;
 
@@ -36,7 +46,10 @@ const SCHEMA = {
   additionalProperties: false,
 } as const;
 
+type Raw = { theme: string; rhymeScheme: string; lines: string[] };
+
 const clip = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+const fits = (line: string, target: number) => Math.abs(countSyllables(line) - target) <= SYLLABLE_TOLERANCE;
 const startsWithDraft = (line: string, draft: string) =>
   line.trim().toLowerCase().startsWith(draft.trim().toLowerCase());
 
@@ -68,37 +81,70 @@ export async function POST(request: Request) {
     "Lines:",
     ...lines.map(
       (l, i) =>
-        `${i + 1}. original (${countSyllables(l.original)} syllables): ${l.original}\n   draft: ${l.parody.trim() || "(empty)"}`
+        `${i + 1}. original (${countSyllables(l.original)} syllables; write exactly ${countSyllables(l.original)}): ${l.original}\n   draft: ${l.parody.trim() || "(empty)"}`
     ),
   ]
     .filter(Boolean)
     .join("\n");
 
-  try {
-    const client = new Anthropic({ timeout: 50_000, maxRetries: 1 });
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      // Thinking would spend the small token budget before any lyrics are written.
-      thinking: { type: "disabled" },
-      output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
-      system: SYSTEM,
-      messages: [{ role: "user", content: prompt }],
-    });
-    if (response.stop_reason === "refusal") return Response.json({ error: "The AI declined this one" }, { status: 422 });
-    if (response.stop_reason === "max_tokens") return Response.json({ error: "The AI ran out of room — try a shorter chunk" }, { status: 502 });
-
-    const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-    const raw = JSON.parse(text) as { theme: string; rhymeScheme: string; lines: string[] };
-    // One line per original; the user's own words always survive.
-    const out = lines.map((l, i) => {
+  const targets = lines.map((l) => countSyllables(l.original));
+  /** One line per original; the user's own words always survive. */
+  const merge = (raw: Raw) =>
+    lines.map((l, i) => {
       const draft = l.parody.trim();
       const line = (raw.lines[i] ?? "").trim().slice(0, MAX_LINE_CHARS);
       return draft && !startsWithDraft(line, draft) ? draft : line || draft;
     });
+  /** Lines the AI wrote (not the user's untouched draft) that miss their syllable count. */
+  const misses = (out: string[]) =>
+    out.flatMap((line, i) => (line && line !== lines[i].parody.trim() && !fits(line, targets[i]) ? [i] : []));
+
+  try {
+    const client = new Anthropic({ timeout: 20_000, maxRetries: 1 });
+    const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
+    let raw: Raw | null = null;
+    let out: string[] = [];
+    let off: number[] = [];
+    for (let round = 0; round <= FIT_RETRIES; round++) {
+      const response = await client.messages.create({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        // Thinking would spend the small token budget before any lyrics are written.
+        thinking: { type: "disabled" },
+        output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
+        system: SYSTEM,
+        messages,
+      });
+      if (response.stop_reason === "refusal") return Response.json({ error: "The AI declined this one" }, { status: 422 });
+      if (response.stop_reason === "max_tokens") {
+        if (raw) break;
+        return Response.json({ error: "The AI ran out of room — try a shorter chunk" }, { status: 502 });
+      }
+      const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+      const next = JSON.parse(text) as Raw;
+      const merged = merge(next);
+      // Lines that already fit stay from earlier rounds; only the misses get rewritten.
+      out = raw ? out.map((line, i) => (off.includes(i) ? merged[i] : line)) : merged;
+      raw = next;
+      off = misses(out);
+      if (!off.length || round === FIT_RETRIES) break;
+      messages.push(
+        { role: "assistant", content: text },
+        {
+          role: "user",
+          content: `These lines don't fit the melody. Rewrite only them to the exact syllable count, keep every other line as it is, and return all ${lines.length} lines again:\n${off
+            .map((i) => `${i + 1}. "${out[i]}" has ${countSyllables(out[i])} syllables; it needs ${targets[i]}.`)
+            .join("\n")}`,
+        }
+      );
+    }
+    if (!raw) return Response.json({ error: "AI request failed" }, { status: 502 });
+
+    // Anything still off is dropped: the line goes back to the user's draft (or stays empty).
     const result: ParodyAssistResponse = {
-      analysis: { theme: raw.theme, rhymeScheme: raw.rhymeScheme, syllables: lines.map((l) => countSyllables(l.original)) },
-      lines: out,
+      analysis: { theme: raw.theme, rhymeScheme: raw.rhymeScheme, syllables: targets },
+      lines: out.map((line, i) => (off.includes(i) ? lines[i].parody : line)),
+      unfit: off,
     };
     return Response.json(result);
   } catch (error) {
