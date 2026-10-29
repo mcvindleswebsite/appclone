@@ -1,10 +1,10 @@
 "use client";
 
 import { Check, Copy, Loader2, Pencil, Send } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import type { ImageInput, ReplyOption, ReplyResult } from "@/types/me";
+import type { ImageInput, Quality, ReplyOption, ReplyResult } from "@/types/me";
 
 import { ImagePicker } from "./ImagePicker";
 import { meFetch } from "./images";
@@ -27,6 +27,11 @@ const COPY = {
     go: "Write openers",
   },
 } as const;
+
+const QUALITY_KEY = "vindle_me_quality";
+
+/** Dollars, to the cent, or "<$0.01". */
+export const dollars = (n: number) => (n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
 
 /** One option, shown as the bubbles it'd send, with copy, edit, and "I sent this" (which teaches it). */
 function OptionCard({ option, mode }: { option: ReplyOption; mode: "reply" | "opener" }) {
@@ -106,12 +111,23 @@ export function WriteTab({ mode }: { mode: "reply" | "opener" }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ReplyResult | null>(null);
+  const [quality, setQuality] = useState<Quality>("best");
+
+  // Remembers the last pick on this device (read after mount, so the server render matches).
+  useEffect(() => {
+    const saved = localStorage.getItem(QUALITY_KEY);
+    if (saved === "quick" || saved === "best") setTimeout(() => setQuality(saved), 0);
+  }, []);
+  const pickQuality = (q: Quality) => {
+    setQuality(q);
+    localStorage.setItem(QUALITY_KEY, q);
+  };
 
   const write = async () => {
     setBusy(true);
     setError(null);
     try {
-      setResult(await meFetch<ReplyResult>("/api/me/write", { method: "POST", json: { mode, images, text, note } }));
+      setResult(await meFetch<ReplyResult>("/api/me/write", { method: "POST", json: { mode, images, text, note, quality } }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
@@ -141,6 +157,24 @@ export function WriteTab({ mode }: { mode: "reply" | "opener" }) {
           placeholder={copy.note}
           className="w-full rounded-2xl bg-black/[0.04] px-3 py-2.5 text-[14px] outline-none"
         />
+        <div className="flex rounded-full bg-black/[0.06] p-1 text-[13px] font-semibold">
+          {(
+            [
+              ["quick", "Quick", "Sonnet · about half the price"],
+              ["best", "Best", "Opus · sounds most like you"],
+            ] as const
+          ).map(([id, label, hint]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => pickQuality(id)}
+              className={cn("flex-1 rounded-full px-3 py-1.5 leading-tight", quality === id ? "bg-black text-white" : "text-black/50")}
+            >
+              {label}
+              <span className={cn("block text-[10px] font-normal", quality === id ? "text-white/60" : "text-black/40")}>{hint}</span>
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={() => void write()}
@@ -156,6 +190,11 @@ export function WriteTab({ mode }: { mode: "reply" | "opener" }) {
       {result && (
         <div className={cn("flex flex-col gap-3", busy && "opacity-40")}>
           <p className="px-1 text-[13px] text-black/50 italic">Read: {result.read}</p>
+          {result.cost !== undefined && (
+            <p className="px-1 text-[12px] text-black/40">
+              {result.quality === "quick" ? "Quick" : "Best"} · cost {dollars(result.cost)}
+            </p>
+          )}
           {result.usedFacts.length > 0 && (
             <p className="px-1 text-[13px] text-black/60">
               Leans on: <span className="font-semibold text-black">{result.usedFacts.join(" · ")}</span>

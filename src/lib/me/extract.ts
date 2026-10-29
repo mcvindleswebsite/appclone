@@ -32,7 +32,7 @@ export const extractSource = async (source: MeSource): Promise<StyleExample[]> =
     if (error instanceof Declined) return ask(ME_MODEL);
     throw error;
   });
-  return read.conversations
+  return read.data.conversations
     .map((c, i) => ({
       id: newId(),
       source: source.image ? ("screenshot" as const) : ("text" as const),

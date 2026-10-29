@@ -65,7 +65,13 @@ export interface ReplyResult {
   read: string;
   /** Background facts (survey answers or today notes) any option leans on; usually empty. */
   usedFacts: string[];
+  /** Added by the route: what the call cost in dollars, and which tier wrote it. */
+  cost?: number;
+  quality?: Quality;
 }
+
+/** "quick" writes on Sonnet for about half the price; "best" on Opus. */
+export type Quality = "quick" | "best";
 
 export interface ImageInput {
   media_type: "image/jpeg" | "image/png" | "image/webp" | "image/gif";

@@ -6,7 +6,7 @@ import { readExamples, readProfile, writeProfile } from "@/lib/me/store";
 export const rebuildStyle = async () => {
   const [examples, profile] = await Promise.all([readExamples(), readProfile()]);
   if (!examples.length) return profile;
-  const style = await askText(STYLE_SYSTEM, [{ type: "text", text: styleInput(examples, profile) }], "medium");
+  const { text: style } = await askText(STYLE_SYSTEM, [{ type: "text", text: styleInput(examples, profile) }], "medium");
   // Re-read so survey answers saved meanwhile aren't overwritten.
   const latest = await readProfile();
   const next = { ...latest, style: style.trim(), styleBuiltAt: Date.now(), styleExamples: examples.length };

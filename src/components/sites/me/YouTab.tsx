@@ -1,12 +1,13 @@
 "use client";
 
 import { Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { SURVEY } from "@/data/me-survey";
 import type { MeProfile } from "@/types/me";
 
 import { meFetch } from "./images";
+import { dollars } from "./WriteTab";
 
 const ago = (at: number) => {
   const hours = Math.floor((Date.now() - at) / 3_600_000);
@@ -16,8 +17,30 @@ const ago = (at: number) => {
 };
 
 /** About you: the survey and today's notes. Both are background it only uses when a chat is on them. */
-export function YouTab({ profile, onProfile, onSurvey }: { profile: MeProfile; onProfile: (p: MeProfile) => void; onSurvey: () => void }) {
+export function YouTab({
+  profile,
+  onProfile,
+  onSurvey,
+  active,
+}: {
+  profile: MeProfile;
+  onProfile: (p: MeProfile) => void;
+  onSurvey: () => void;
+  /** The tab is showing: refresh the spend total. */
+  active: boolean;
+}) {
   const [today, setToday] = useState("");
+  const [spend, setSpend] = useState<{ total: number; calls: number } | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    void meFetch<{ total: number; calls: number }>("/api/me/spend")
+      .then((s) => live && setSpend(s))
+      .catch(() => null);
+    return () => {
+      live = false;
+    };
+  }, [active]);
   const [busy, setBusy] = useState(false);
   const answered = Object.keys(profile.answers).length;
 
@@ -86,6 +109,15 @@ export function YouTab({ profile, onProfile, onSurvey }: { profile: MeProfile; o
           {answered} of {SURVEY.length} answered · {answered >= SURVEY.length ? "tap to edit" : "tap to continue"}
         </p>
       </button>
+
+      <div className="rounded-3xl border border-black/10 p-5">
+        <p className="text-[12px] font-semibold tracking-[0.12em] text-black/50 uppercase">AI cost this month</p>
+        <p className="mt-1 font-serif text-[40px] leading-none font-bold">{spend ? dollars(spend.total) : "—"}</p>
+        <p className="mt-2 text-[13px] text-black/50">
+          {spend ? `${spend.calls} AI call${spend.calls === 1 ? "" : "s"} from /me. ` : ""}Worked out from each call&apos;s token count, so
+          it&apos;s close to your bill but not exact. Counting started with this update. /bet isn&apos;t included.
+        </p>
+      </div>
     </div>
   );
 }

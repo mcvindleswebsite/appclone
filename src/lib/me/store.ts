@@ -6,6 +6,8 @@ const EXAMPLES_KEY = "vindle_me_examples";
 const PROFILE_KEY = "vindle_me_profile";
 /** The screenshots and pastes examples were read from, one per hash field, for rescans. */
 const SOURCES_KEY = "vindle_me_sources";
+/** Dollars spent on AI calls, one field per month ("2026-10"), plus "<month>:calls". */
+const SPEND_KEY = "vindle_me_spend";
 
 /** Today notes stay this long; only the last day or two ever reach the AI. */
 const TODAY_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
@@ -72,3 +74,18 @@ export const readProfile = async (now = Date.now()): Promise<MeProfile> => {
 export const writeProfile = async (profile: MeProfile) => need(await redis(["SET", PROFILE_KEY, JSON.stringify(profile)]));
 
 export const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+const month = (now = new Date()) => now.toISOString().slice(0, 7);
+
+export const addSpend = async (dollars: number) => {
+  const m = month();
+  await redis(["HINCRBYFLOAT", SPEND_KEY, m, dollars.toFixed(6)]);
+  await redis(["HINCRBY", SPEND_KEY, `${m}:calls`, 1]);
+};
+
+export const readSpend = async () => {
+  const m = month();
+  const reply = need(await redis(["HMGET", SPEND_KEY, m, `${m}:calls`]));
+  const [total, calls] = (reply.result as (string | null)[] | null) ?? [];
+  return { month: m, total: Number(total ?? 0), calls: Number(calls ?? 0) };
+};

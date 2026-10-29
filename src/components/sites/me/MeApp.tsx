@@ -88,7 +88,7 @@ export function MeApp() {
               <TrainTab profile={profile} onProfile={setProfile} />
             </div>
             <div hidden={tab !== "you"}>
-              <YouTab profile={profile} onProfile={setProfile} onSurvey={() => setSurvey(true)} />
+              <YouTab profile={profile} onProfile={setProfile} onSurvey={() => setSurvey(true)} active={tab === "you"} />
             </div>
           </>
         )}
