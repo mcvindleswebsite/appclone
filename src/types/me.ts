@@ -11,8 +11,8 @@ export type Situation = (typeof SITUATIONS)[number];
 /** One conversation (or run of messages) that shows how Vincent texts. */
 export interface StyleExample {
   id: string;
-  /** "sent": a reply the AI wrote (or he edited) that he actually sent. */
-  source: "screenshot" | "text" | "sent";
+  /** "sent": a reply the AI wrote (or he edited) that he actually sent. "instagram": from his data download. */
+  source: "screenshot" | "text" | "sent" | "instagram";
   situation: Situation;
   turns: ChatTurn[];
   createdAt: number;

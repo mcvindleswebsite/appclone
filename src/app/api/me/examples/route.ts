@@ -70,7 +70,7 @@ export async function DELETE(request: Request) {
     const examples = await readExamples();
     // ?unsaved=1: forget conversations added before screenshots were kept (they can't be rescanned).
     if (params.get("unsaved")) {
-      const ids = examples.filter((e) => !e.sourceId && e.source !== "sent").map((e) => e.id);
+      const ids = examples.filter((e) => !e.sourceId && (e.source === "screenshot" || e.source === "text")).map((e) => e.id);
       await deleteExamples(ids);
       return Response.json({ removed: ids });
     }

@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import type { ImageInput, MeProfile, StyleExample } from "@/types/me";
 
 import { ImagePicker } from "./ImagePicker";
+import { InstagramImport } from "./InstagramImport";
 import { meFetch } from "./images";
 
 /** Rough milestones for how well it can copy him, by conversations learned from. */
@@ -48,6 +49,8 @@ export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile
   const [note, setNote] = useState<string | null>(null);
   const [showStyle, setShowStyle] = useState(false);
   const [banned, setBanned] = useState("");
+  /** An Instagram import can be thousands of conversations; the list grows in pages. */
+  const [shown, setShown] = useState(40);
 
   const load = useCallback(async () => {
     try {
@@ -245,6 +248,13 @@ export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile
         )}
       </div>
 
+      <InstagramImport
+        onProfile={onProfile}
+        onImported={(imported) =>
+          setExamples((prev) => [...imported, ...(prev ?? []).filter((e) => e.source !== "instagram")].sort((a, b) => b.createdAt - a.createdAt))
+        }
+      />
+
       <div className="rounded-3xl border border-black/10">
         <button type="button" onClick={() => setShowStyle((s) => !s)} className="flex w-full items-center gap-3 p-5 text-left">
           <div className="flex-1">
@@ -317,11 +327,11 @@ export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile
             {busy === "rescan" ? <Loader2 className="size-3.5 animate-spin" /> : <ScanLine className="size-3.5" />} Rescan
           </button>
         </div>
-        {examples?.map((e) => (
+        {examples?.slice(0, shown).map((e) => (
           <div key={e.id} className="flex items-start gap-3 rounded-2xl border border-black/10 p-3">
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold tracking-[0.08em] text-black/40 uppercase">
-                {situationLabel(e.situation)}
+                {e.source === "instagram" ? "instagram" : situationLabel(e.situation)}
                 {e.source === "sent" ? " · sent" : ` · ${e.turns.filter((t) => t.who === "me").length} yours`}
               </p>
               {e.turns.slice(0, 3).map((t, i) => (
@@ -336,6 +346,11 @@ export function TrainTab({ profile, onProfile }: { profile: MeProfile; onProfile
             </button>
           </div>
         ))}
+        {examples && examples.length > shown && (
+          <button type="button" onClick={() => setShown((n) => n + 40)} className="rounded-full border border-black/15 py-2.5 text-[13px] font-semibold">
+            Show more ({examples.length - shown} left)
+          </button>
+        )}
       </div>
     </div>
   );

@@ -9,7 +9,7 @@ export const maxDuration = 120;
 export async function GET(request: Request) {
   return meRoute(request, async () => {
     const [ids, examples] = await Promise.all([sourceIds(), readExamples()]);
-    const unsaved = examples.filter((e) => !e.sourceId && e.source !== "sent").length;
+    const unsaved = examples.filter((e) => !e.sourceId && (e.source === "screenshot" || e.source === "text")).length;
     return Response.json({ sources: ids, unsaved });
   });
 }
